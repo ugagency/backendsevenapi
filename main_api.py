@@ -66,20 +66,7 @@ def executar_robo_selenium(data_usuario: str, filename: str):
         print(f"Erro ao converter data: {data_usuario}")
         return
 
-    # 2. Configurar Selenium Headless para o Servidor
-    chrome_options = Options()
-    #chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    
-    # Check if we are in a container/server
-    chrome_bin = os.getenv("CHROME_BIN")
-    if chrome_bin:
-        chrome_options.binary_location = chrome_bin
-    
-    driver = webdriver.Chrome(options=chrome_options)
-
-    # 2. Configurar Selenium Headless para o Servidor
+    # 2. Configurar Selenium Headless para o Servidor (Railway/Docker)
     chrome_options = Options()
     chrome_options.add_argument("--headless=new") # IMPORTANTE: Modo invisível
     chrome_options.add_argument("--no-sandbox")
@@ -87,12 +74,12 @@ def executar_robo_selenium(data_usuario: str, filename: str):
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # Check if we are in a container/server (Railway)
+    # Localiza o binário do Chrome no Railway
     chrome_bin = os.getenv("CHROME_BIN")
     if chrome_bin:
         chrome_options.binary_location = chrome_bin
     
-    # No Railway/Docker, o driver já está no PATH, não precisa do ChromeDriverManager
+    # Inicializa o driver apenas UMA vez com as opções corretas
     driver = webdriver.Chrome(options=chrome_options)
     
     EXCEL_PATH = f"/tmp/{filename}"
