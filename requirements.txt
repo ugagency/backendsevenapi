@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+selenium
+webdriver-manager
+openpyxl
+supabase
+python-dotenv
+python-multipart
