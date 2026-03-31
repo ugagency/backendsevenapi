@@ -177,6 +177,9 @@ def executar_robo_selenium(data_usuario: str, filename: str):
             evento = row[0].value
             if not evento:
                 continue
+                
+            print(f"[{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] Detalhando evento: {evento}")
+            
             driver.get(f"https://vale.coupahost.com/quotes/external_responses/{evento}/edit")
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
 
