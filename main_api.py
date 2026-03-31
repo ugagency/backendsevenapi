@@ -74,6 +74,14 @@ def executar_robo_selenium(data_usuario: str, filename: str):
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     
+    # --- OTIMIZAÇÕES REDUÇÃO DE MEMÓRIA E CPU ---
+    chrome_options.add_argument("--disable-extensions") # Não carregar extensões
+    chrome_options.add_argument("--disable-software-rasterizer") # Exige menos da CPU onde já não tem GPU
+    chrome_options.add_argument("--disable-logging") # Menos escrita de logs nativos do chrome
+    chrome_options.add_argument("--log-level=3")     # Silencia saída desnecessária
+    chrome_options.add_argument("--blink-settings=imagesEnabled=false") # 🚀 DESATIVA IMAGENS (salva MUITA RAM e Banda)
+    chrome_options.page_load_strategy = 'eager' # 🚀 CARREGA MAIS RÁPIDO (não espera recursos inúteis da página, só o DOM)
+    
     # Localiza o binário do Chrome no Railway
     chrome_bin = os.getenv("CHROME_BIN")
     if chrome_bin:
