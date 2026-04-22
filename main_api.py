@@ -156,6 +156,16 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                         if data_inicio != HOJE: continue
 
                         numero_evento = colunas[0].find_element(By.TAG_NAME, "a").text.strip()
+                        
+                        # Verifica se o evento já existe no banco de dados
+                        try:
+                            res_db = supabase.table("eventos_coletados").select("id").eq("numero_evento", numero_evento).execute()
+                            if res_db.data:
+                                print(f"⚠️ Evento {numero_evento} já coletado anteriormente. Pulando...")
+                                continue
+                        except Exception as e_db:
+                            print(f"Erro ao verificar evento {numero_evento} no banco: {e_db}")
+
                         data_final = colunas[3].text.strip()
                         print(f"Coletado evento: {numero_evento}")
                         ws.append([numero_evento, '', data_final, '', '', '', ''])
@@ -451,11 +461,36 @@ def executar_robo_selenium(data_usuario: str, filename: str):
             # remove linhas antigas (todas a partir da linha 2) e escreve ordenado
             if ws.max_row > 1:
                 ws.delete_rows(2, ws.max_row - 1)
+            
+            eventos_para_inserir = []
+            vistos_db = set()
+
             for r in rows_sorted:
                 ws.append(list(r))
+                ne = str(r[0]).strip()
+                if ne and ne != "None" and ne not in vistos_db:
+                    vistos_db.add(ne)
+                    eventos_para_inserir.append({
+                        "numero_evento": ne,
+                        "uf": str(r[1]) if r[1] is not None else "",
+                        "data_evento": str(r[2]) if r[2] is not None else "",
+                        "descricao": str(r[3]) if r[3] is not None else "",
+                        "quantidade": str(r[4]) if r[4] is not None else "",
+                        "unidade": str(r[5]) if r[5] is not None else ""
+                    })
+
             wb.save(EXCEL_PATH)
+            
+            # Salva os novos eventos no banco de dados para evitar futuras duplicidades
+            if eventos_para_inserir:
+                try:
+                    supabase.table("eventos_coletados").upsert(eventos_para_inserir).execute()
+                    print(f"✅ Inseridos {len(eventos_para_inserir)} eventos no banco de dados.")
+                except Exception as e_db:
+                    print(f"⚠️ Erro ao inserir eventos no banco: {e_db}")
+
         except Exception as e:
-            print(f"Erro ao ordenar planilha: {e}")
+            print(f"Erro ao ordenar e salvar planilha/banco: {e}")
         # Upload para Supabase Storage
         with open(EXCEL_PATH, "rb") as f:
             supabase.storage.from_(SUPABASE_BUCKET).upload(
