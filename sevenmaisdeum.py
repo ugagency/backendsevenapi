@@ -69,7 +69,7 @@ def executar_funcao():
     wb = Workbook()
     ws = wb.active
     ws.title = "Eventos"
-    ws.append(["Numero do evento", "UF(VALE)", "DATA", "DESCRIÇÃO", "QTDE", "UNID. MED", "pagina de descrição", "Titulo"])
+    ws.append(["Numero do evento", "Titulo", "UF(VALE)", "DATA", "DESCRIÇÃO", "QTDE", "UNID. MED", "pagina de descrição"])
     wb.save(EXCEL_PATH)
 
     # --- INICIA SELENIUM ---
@@ -141,7 +141,7 @@ def executar_funcao():
                 data_final = colunas[3].text.strip()
                 print(f"Número do evento: {numero_evento} | Data final: {data_final}")
 
-                ws.append([numero_evento, '', data_final, '', '', '', '', ''])
+                ws.append([numero_evento, '', '', data_final, '', '', '', ''])
 
             except Exception as e:
                 print(f"⚠️ Não foi possível extrair dados da linha: {e}")
@@ -187,7 +187,7 @@ def executar_funcao():
                 if botoes2:
                     botoes2[0].click()
         except Exception:
-            row[6].value = "Erro ao verificar página de descrição"
+            row[7].value = "Erro ao verificar página de descrição"
 
         # Scroll e abre seção das informações
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
@@ -217,7 +217,7 @@ def executar_funcao():
         linhas_evento = [row]
         if len(elementos) > 1:
             for i in range(len(elementos) - 1):
-                nova_linha = [evento, row[1].value, row[2].value, '', '', '', '', '']
+                nova_linha = [evento, row[1].value, row[2].value, row[3].value, '', '', '', '']
                 ws.append(nova_linha)
             wb.save(EXCEL_PATH)
             linhas_evento = [r for r in ws.iter_rows(min_row=2) if r[0].value == evento]
@@ -331,30 +331,30 @@ def executar_funcao():
                 time.sleep(1)
             try:
                 quantidade_el = driver.find_element(By.XPATH, '//*[@id="itemsAndServicesApp"]/div/div/div[1]/div[2]/div[2]/div/form/div/div/div[2]/div/div[2]/div/p/span[1]')
-                linha_atual[4].value = quantidade_el.text
+                linha_atual[5].value = quantidade_el.text
             except Exception:
-                linha_atual[4].value = 'Não foi possivel coletar a quantidade'
+                linha_atual[5].value = 'Não foi possivel coletar a quantidade'
 
             try:
                 unidade_el = driver.find_element(By.XPATH, '//*[@id="itemsAndServicesApp"]/div/div/div[1]/div[2]/div[2]/div/form/div/div/div[2]/div/div[2]/div/p/span[2]')
-                linha_atual[5].value = unidade_el.text
+                linha_atual[6].value = unidade_el.text
             except Exception:
-                linha_atual[5].value = 'Não foi possivel coletar a unidade'
+                linha_atual[6].value = 'Não foi possivel coletar a unidade'
 
             try:
                 descri_el = driver.find_element(By.XPATH, '//*[@id="itemsAndServicesApp"]/div/div/div[1]/div[2]/div[2]/div/form/div/div/div[1]/div/div[2]/div/p')
                 descri = descri_el.text
                 desejado = re.search(r'PT\s*\|\|\s*(.*?)\*{3,}', descri, re.DOTALL)
-                linha_atual[3].value = desejado.group(1).strip() if desejado else descri
+                linha_atual[4].value = desejado.group(1).strip() if desejado else descri
             except Exception:
-                linha_atual[3].value = 'Não foi possivel coletar a descrição'
+                linha_atual[4].value = 'Não foi possivel coletar a descrição'
 
             # Coleta do título da cotação (s-description)
             try:
                 titulo_el = driver.find_element(By.CSS_SELECTOR, ".s-description p.s-textField")
-                linha_atual[7].value = titulo_el.text.strip()
+                linha_atual[1].value = titulo_el.text.strip()
             except Exception:
-                linha_atual[7].value = "Titulo nao encontrado"
+                linha_atual[1].value = "Titulo nao encontrado"
 
             # UF (versão mais robusta)
             try:
@@ -390,9 +390,9 @@ def executar_funcao():
                             found = sig
                             break
 
-                linha_atual[1].value = found if found else 'UF não encontrada'
+                linha_atual[2].value = found if found else 'UF não encontrada'
             except Exception:
-                linha_atual[1].value = 'Não foi possivel coletar a UF'
+                linha_atual[2].value = 'Não foi possivel coletar a UF'
 
             # fecha o detalhe (tenta vários métodos)
             try:

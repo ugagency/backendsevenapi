@@ -98,7 +98,7 @@ def executar_robo_selenium(data_usuario: str, filename: str):
         wb = Workbook()
         ws = wb.active
         ws.title = "Eventos"
-        ws.append(["Numero do evento", "UF(VALE)", "DATA", "DESCRIÇÃO", "QTDE", "UNID. MED", "pagina de descrição", "Titulo"])
+        ws.append(["Numero do evento", "Titulo", "UF(VALE)", "DATA", "DESCRIÇÃO", "QTDE", "UNID. MED", "pagina de descrição"])
         
         wait = WebDriverWait(driver, 20)
         driver.get("https://vale.coupahost.com/sessions/supplier_login")
@@ -168,7 +168,7 @@ def executar_robo_selenium(data_usuario: str, filename: str):
 
                         data_final = colunas[3].text.strip()
                         print(f"Coletado evento: {numero_evento}")
-                        ws.append([numero_evento, '', data_final, '', '', '', '', ''])
+                        ws.append([numero_evento, '', '', data_final, '', '', '', ''])
                     except Exception as e:
                         print(f"Erro na linha {i}: {e}")
                         continue
@@ -210,7 +210,7 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                     if botoes2:
                         botoes2[0].click()
             except Exception:
-                row[6].value = "Erro ao verificar página de descrição"
+                row[7].value = "Erro ao verificar página de descrição"
 
             # Scroll e abre seção das informações
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
@@ -240,7 +240,7 @@ def executar_robo_selenium(data_usuario: str, filename: str):
             linhas_evento = [row]
             if len(elementos) > 1:
                 for i in range(len(elementos) - 1):
-                    nova_linha = [evento, row[1].value, row[2].value, '', '', '', '', '']
+                    nova_linha = [evento, row[1].value, row[2].value, row[3].value, '', '', '', '']
                     ws.append(nova_linha)
                 wb.save(EXCEL_PATH)
                 linhas_evento = [r for r in ws.iter_rows(min_row=2) if r[0].value == evento]
@@ -356,30 +356,30 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                     time.sleep(1)
                 try:
                     quantidade_el = driver.find_element(By.XPATH, '//*[@id="itemsAndServicesApp"]/div/div/div[1]/div[2]/div[2]/div/form/div/div/div[2]/div/div[2]/div/p/span[1]')
-                    linha_atual[4].value = quantidade_el.text
+                    linha_atual[5].value = quantidade_el.text
                 except Exception:
-                    linha_atual[4].value = 'N/A'
+                    linha_atual[5].value = 'N/A'
 
                 try:
                     unidade_el = driver.find_element(By.XPATH, '//*[@id="itemsAndServicesApp"]/div/div/div[1]/div[2]/div[2]/div/form/div/div/div[2]/div/div[2]/div/p/span[2]')
-                    linha_atual[5].value = unidade_el.text
+                    linha_atual[6].value = unidade_el.text
                 except Exception:
-                    linha_atual[5].value = 'N/A'
+                    linha_atual[6].value = 'N/A'
 
                 try:
                     descri_el = driver.find_element(By.XPATH, '//*[@id="itemsAndServicesApp"]/div/div/div[1]/div[2]/div[2]/div/form/div/div/div[1]/div/div[2]/div/p')
                     descri = descri_el.text
                     desejado = re.search(r'PT\s*\|\|\s*(.*?)\*{3,}', descri, re.DOTALL)
-                    linha_atual[3].value = desejado.group(1).strip() if desejado else descri
+                    linha_atual[4].value = desejado.group(1).strip() if desejado else descri
                 except Exception:
-                    linha_atual[3].value = 'N/A'
+                    linha_atual[4].value = 'N/A'
 
                 # Coleta do título da cotação (s-description)
                 try:
                     titulo_el = driver.find_element(By.CSS_SELECTOR, ".s-description p.s-textField")
-                    linha_atual[7].value = titulo_el.text.strip()
+                    linha_atual[1].value = titulo_el.text.strip()
                 except Exception:
-                    linha_atual[7].value = "Titulo nao encontrado"
+                    linha_atual[1].value = "Titulo nao encontrado"
 
                 # UF (versão mais robusta)
                 try:
@@ -415,9 +415,9 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                                 found = sig
                                 break
 
-                    linha_atual[1].value = found if found else 'UF não encontrada'
+                    linha_atual[2].value = found if found else 'UF não encontrada'
                 except Exception:
-                    linha_atual[1].value = 'N/A'
+                    linha_atual[2].value = 'N/A'
 
                 # fecha o detalhe (tenta vários métodos)
                 try:
@@ -479,12 +479,12 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                     vistos_db.add(ne)
                     eventos_para_inserir.append({
                         "numero_evento": ne,
-                        "uf": str(r[1]) if r[1] is not None else "",
-                        "data_evento": str(r[2]) if r[2] is not None else "",
-                        "descricao": str(r[3]) if r[3] is not None else "",
-                        "quantidade": str(r[4]) if r[4] is not None else "",
-                        "unidade": str(r[5]) if r[5] is not None else "",
-                        "titulo": str(r[7]) if len(r) > 7 and r[7] is not None else ""
+                        "titulo": str(r[1]) if len(r) > 1 and r[1] is not None else "",
+                        "uf": str(r[2]) if r[2] is not None else "",
+                        "data_evento": str(r[3]) if r[3] is not None else "",
+                        "descricao": str(r[4]) if r[4] is not None else "",
+                        "quantidade": str(r[5]) if r[5] is not None else "",
+                        "unidade": str(r[6]) if r[6] is not None else ""
                     })
 
             wb.save(EXCEL_PATH)
