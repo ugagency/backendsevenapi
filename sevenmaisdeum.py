@@ -69,7 +69,7 @@ def executar_funcao():
     wb = Workbook()
     ws = wb.active
     ws.title = "Eventos"
-    ws.append(["Numero do evento", "UF(VALE)", "DATA", "DESCRIÇÃO", "QTDE", "UNID. MED", "pagina de descrição"])
+    ws.append(["Numero do evento", "UF(VALE)", "DATA", "DESCRIÇÃO", "QTDE", "UNID. MED", "pagina de descrição", "Titulo"])
     wb.save(EXCEL_PATH)
 
     # --- INICIA SELENIUM ---
@@ -141,7 +141,7 @@ def executar_funcao():
                 data_final = colunas[3].text.strip()
                 print(f"Número do evento: {numero_evento} | Data final: {data_final}")
 
-                ws.append([numero_evento, '', data_final, '', '', '', ''])
+                ws.append([numero_evento, '', data_final, '', '', '', '', ''])
 
             except Exception as e:
                 print(f"⚠️ Não foi possível extrair dados da linha: {e}")
@@ -217,7 +217,7 @@ def executar_funcao():
         linhas_evento = [row]
         if len(elementos) > 1:
             for i in range(len(elementos) - 1):
-                nova_linha = [evento, row[1].value, row[2].value, '', '', '', '']
+                nova_linha = [evento, row[1].value, row[2].value, '', '', '', '', '']
                 ws.append(nova_linha)
             wb.save(EXCEL_PATH)
             linhas_evento = [r for r in ws.iter_rows(min_row=2) if r[0].value == evento]
@@ -348,6 +348,13 @@ def executar_funcao():
                 linha_atual[3].value = desejado.group(1).strip() if desejado else descri
             except Exception:
                 linha_atual[3].value = 'Não foi possivel coletar a descrição'
+
+            # Coleta do título da cotação (s-description)
+            try:
+                titulo_el = driver.find_element(By.CSS_SELECTOR, ".s-description p.s-textField")
+                linha_atual[7].value = titulo_el.text.strip()
+            except Exception:
+                linha_atual[7].value = "Titulo nao encontrado"
 
             # UF (versão mais robusta)
             try:
