@@ -352,7 +352,8 @@ def executar_funcao():
             # Coleta do título da cotação (s-description)
             try:
                 titulo_el = driver.find_element(By.CSS_SELECTOR, ".s-description p.s-textField")
-                linha_atual[1].value = titulo_el.text.strip()
+                titulo_raw = titulo_el.text.strip()
+                linha_atual[1].value = titulo_raw.split("||")[0].strip()
             except Exception:
                 linha_atual[1].value = "Titulo nao encontrado"
 
