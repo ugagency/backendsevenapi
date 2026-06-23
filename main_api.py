@@ -52,9 +52,15 @@ def parse_date_str(s: str):
             continue
     return None
 
+def log(msg: str):
+    print(f"[{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] {msg}", flush=True)
+
 def executar_robo_selenium(data_usuario: str, filename: str):
     """Lógica principal do robô Selenium refatorada para rodar sem interface (headless)."""
-    
+
+    inicio_total = time.time()
+    log(f"=== ROBÔ INICIADO | data={data_usuario} | arquivo={filename} ===")
+
     # 1. Preparar data (Aceita 6 ou 8 dígitos: DDMMAA ou DDMMAAAA)
     if len(data_usuario) == 6:
         HOJE_str = f"{data_usuario[:2]}/{data_usuario[2:4]}/{data_usuario[4:]}"
@@ -63,7 +69,7 @@ def executar_robo_selenium(data_usuario: str, filename: str):
 
     HOJE = parse_date_str(HOJE_str)
     if not HOJE:
-        print(f"Erro ao converter data: {data_usuario}")
+        log(f"ERRO: Não foi possível converter a data '{data_usuario}'")
         return
 
     # 2. Configurar Selenium Headless para o Servidor (Railway/Docker)
@@ -101,12 +107,14 @@ def executar_robo_selenium(data_usuario: str, filename: str):
         ws.append(["Numero do evento", "Titulo", "UF(VALE)", "DATA", "DESCRIÇÃO", "QTDE", "UNID. MED", "pagina de descrição"])
         
         wait = WebDriverWait(driver, 20)
+        log("Acessando página de login...")
         driver.get("https://vale.coupahost.com/sessions/supplier_login")
 
         # Login
         wait.until(EC.presence_of_element_located((By.ID, "user_login")))
         driver.find_element(By.ID, "user_login").send_keys(USER_VALE)
         driver.find_element(By.ID, "user_password").send_keys(PASS_VALE, Keys.RETURN)
+        log("Login enviado. Aguardando carregamento...")
 
         # Filtro de data (mesma lógica)
         try:
@@ -115,18 +123,24 @@ def executar_robo_selenium(data_usuario: str, filename: str):
             time.sleep(5)
             time_filter = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="ch_start_time"]')))
             time_filter.click()
+            log("Filtro de data aplicado.")
         except:
-            pass
+            log("AVISO: Filtro de data não encontrado, continuando sem ele.")
 
         # Coleta de dados - Parte 1: Listagem de Eventos
+        log(f"--- FASE 1: Coletando lista de eventos para {HOJE_str} ---")
         encontrou_ontem = False
+        pagina = 1
+        total_coletados = 0
         while True:
+            log(f"Pagina {pagina}: aguardando tabela de eventos...")
             time.sleep(5)
             try:
                 tbody = wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="quote_request_table_tag"]')))
                 # Usar index para evitar stale element reference
                 num_linhas = len(tbody.find_elements(By.TAG_NAME, "tr"))
-                
+                log(f"Pagina {pagina}: {num_linhas} linhas encontradas na tabela.")
+
                 for i in range(num_linhas):
                     try:
                         # Re-fetch as linhas a cada iteração para evitar stale
@@ -134,7 +148,7 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                         linhas = tbody.find_elements(By.TAG_NAME, "tr")
                         if i >= len(linhas): break
                         linha = linhas[i]
-                        
+
                         colunas = linha.find_elements(By.TAG_NAME, "td")
                         if not colunas or len(colunas) < 7: continue
 
@@ -150,54 +164,61 @@ def executar_robo_selenium(data_usuario: str, filename: str):
 
                         if data_inicio < HOJE:
                             encontrou_ontem = True
-                            print(f"Encontrou data anterior a hoje: {data_inicio}")
+                            log(f"Data anterior encontrada ({data_inicio}), encerrando coleta.")
                             break
-                        
+
                         if data_inicio != HOJE: continue
 
                         numero_evento = colunas[0].find_element(By.TAG_NAME, "a").text.strip()
-                        
+
                         # Verifica se o evento já existe no banco de dados
                         try:
                             res_db = supabase.table("eventos_coletados").select("id").eq("numero_evento", numero_evento).execute()
                             if res_db.data:
-                                print(f"⚠️ Evento {numero_evento} já coletado anteriormente. Pulando...")
+                                log(f"AVISO: Evento {numero_evento} ja existe no banco. Pulando.")
                                 continue
                         except Exception as e_db:
-                            print(f"Erro ao verificar evento {numero_evento} no banco: {e_db}")
+                            log(f"ERRO ao verificar evento {numero_evento} no banco: {e_db}")
 
                         data_final = colunas[3].text.strip()
-                        print(f"Coletado evento: {numero_evento}")
+                        total_coletados += 1
+                        log(f"  [{total_coletados}] Evento coletado: {numero_evento} | prazo: {data_final}")
                         ws.append([numero_evento, '', '', data_final, '', '', '', ''])
                     except Exception as e:
-                        print(f"Erro na linha {i}: {e}")
+                        log(f"ERRO na linha {i} da pagina {pagina}: {e}")
                         continue
             except Exception as e:
-                print(f"Erro ao acessar tabela: {e}")
+                log(f"ERRO ao acessar tabela na pagina {pagina}: {e}")
                 break
 
             if encontrou_ontem: break
             try:
                 proximo = driver.find_element(By.CLASS_NAME, "next_page")
                 driver.execute_script("arguments[0].click();", proximo)
+                pagina += 1
                 time.sleep(3)
             except:
+                log(f"Sem proxima pagina. Total de paginas percorridas: {pagina}.")
                 break
-        
+
         wb.save(EXCEL_PATH)
-        print("Fim da coleta da lista. Iniciando detalhamento...")
+        log(f"Fase 1 concluida: {total_coletados} evento(s) coletado(s). Iniciando detalhamento...")
 
         # --- DETALHA CADA EVENTO ---
         wb = load_workbook(EXCEL_PATH)
         ws = wb["Eventos"]
 
-        for row in ws.iter_rows(min_row=2):
+        todos_eventos = [row[0].value for row in ws.iter_rows(min_row=2) if row[0].value]
+        total_eventos = len(todos_eventos)
+        log(f"--- FASE 2: Detalhando {total_eventos} evento(s) ---")
+
+        for idx_ev, row in enumerate(ws.iter_rows(min_row=2), start=1):
             evento = row[0].value
             if not evento:
                 continue
-                
-            print(f"[{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] Detalhando evento: {evento}")
-            
+
+            log(f"[{idx_ev}/{total_eventos}] Detalhando evento: {evento}")
+
             driver.get(f"https://vale.coupahost.com/quotes/external_responses/{evento}/edit")
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
 
@@ -208,8 +229,10 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                     botoes2 = driver.find_elements(By.ID, 'quote_response_submit')
                     if botoes2:
+                        log(f"  Evento {evento}: botao de submit encontrado, clicando...")
                         botoes2[0].click()
             except Exception:
+                log(f"  ERRO ao verificar pagina de descricao do evento {evento}")
                 row[7].value = "Erro ao verificar página de descrição"
 
             # Scroll e abre seção das informações
@@ -350,6 +373,7 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                         continue
 
                 # coleta campos (mesma lógica, com pequenos waits)
+                log(f"  Item {idx + 1}/{total}: coletando campos...")
                 try:
                     wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="itemsAndServicesApp"]/div/div/div[1]/div[2]/div[2]/div/form/div/div/div[2]/div/div[2]/div/p/span[1]')))
                 except Exception:
@@ -381,6 +405,8 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                     linha_atual[1].value = titulo_raw.split("||")[0].strip()
                 except Exception:
                     linha_atual[1].value = "Titulo nao encontrado"
+
+                log(f"  Item {idx + 1}/{total}: titulo={linha_atual[1].value!r} | uf={linha_atual[2].value!r} | qtde={linha_atual[5].value!r} | unid={linha_atual[6].value!r}")
 
                 # UF (versão mais robusta)
                 try:
@@ -447,7 +473,9 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                 idx += 1
 
             wb.save(EXCEL_PATH)
+            log(f"[{idx_ev}/{total_eventos}] Evento {evento} finalizado.")
 
+        log("--- FASE 3: Ordenando planilha e salvando no banco ---")
         # Ordena a planilha por "Numero do evento" (coluna A) para agrupar linhas com o mesmo número
         try:
             wb = load_workbook(EXCEL_PATH)
@@ -494,30 +522,34 @@ def executar_robo_selenium(data_usuario: str, filename: str):
             if eventos_para_inserir:
                 try:
                     supabase.table("eventos_coletados").upsert(eventos_para_inserir).execute()
-                    print(f"✅ Inseridos {len(eventos_para_inserir)} eventos no banco de dados.")
+                    log(f"Banco atualizado: {len(eventos_para_inserir)} evento(s) inserido(s)/atualizados.")
                 except Exception as e_db:
-                    print(f"⚠️ Erro ao inserir eventos no banco: {e_db}")
+                    log(f"ERRO ao inserir eventos no banco: {e_db}")
+            else:
+                log("Nenhum evento novo para inserir no banco.")
 
         except Exception as e:
-            print(f"Erro ao ordenar e salvar planilha/banco: {e}")
-        # Upload para Supabase Storage
+            log(f"ERRO ao ordenar/salvar planilha ou banco: {e}")
+
+        log("--- FASE 4: Fazendo upload para o Supabase Storage ---")
         with open(EXCEL_PATH, "rb") as f:
             supabase.storage.from_(SUPABASE_BUCKET).upload(
                 path=filename,
                 file=f,
                 file_options={"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
             )
-        
-        # Link público
+
         res = supabase.storage.from_(SUPABASE_BUCKET).get_public_url(filename)
-        print(f"Upload concluído: {res}")
+        log(f"Upload concluido. URL publica: {res}")
 
     except Exception as e:
-        print(f"Erro no robô: {e}")
+        log(f"ERRO FATAL no robô: {e}")
     finally:
         driver.quit()
         if os.path.exists(EXCEL_PATH):
             os.remove(EXCEL_PATH)
+        elapsed = time.time() - inicio_total
+        log(f"=== ROBÔ FINALIZADO | tempo total: {elapsed:.1f}s ===")
 
 @app.get("/")
 def read_root():
