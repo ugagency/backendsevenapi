@@ -346,9 +346,9 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                     processed += 1
                     continue
 
-                # após clique, espera conteúdo de detalhe carregar (xpath de descrição)
+                # após clique, espera conteúdo de detalhe carregar (linha expandida)
                 try:
-                    wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="itemsAndServicesApp"]/div/div/div[1]')))
+                    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".s-itemsAndServicesLine.-expanded")))
                     time.sleep(0.25)
                 except Exception:
                     time.sleep(0.4)
@@ -372,79 +372,107 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                         processed += 1
                         continue
 
-                # coleta campos (mesma lógica, com pequenos waits)
+                # coleta campos — seletores por classe CSS, compatíveis com ambos layouts
                 log(f"  Item {idx + 1}/{total}: coletando campos...")
+
+                # Escopo: a linha atualmente expandida
                 try:
-                    wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="itemsAndServicesApp"]/div/div/div[1]/div[2]/div[2]/div/form/div/div/div[2]/div/div[2]/div/p/span[1]')))
+                    wait.until(EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, ".s-itemsAndServicesLine.-expanded")
+                    ))
+                    linha_dom = driver.find_element(By.CSS_SELECTOR, ".s-itemsAndServicesLine.-expanded")
                 except Exception:
                     time.sleep(1)
-                try:
-                    quantidade_el = driver.find_element(By.XPATH, '//*[@id="itemsAndServicesApp"]/div/div/div[1]/div[2]/div[2]/div/form/div/div/div[2]/div/div[2]/div/p/span[1]')
-                    linha_atual[5].value = quantidade_el.text
-                except Exception:
-                    linha_atual[5].value = 'N/A'
+                    try:
+                        linha_dom = driver.find_element(By.CSS_SELECTOR, ".s-itemsAndServicesLine.-expanded")
+                    except Exception:
+                        linha_dom = driver
 
-                try:
-                    unidade_el = driver.find_element(By.XPATH, '//*[@id="itemsAndServicesApp"]/div/div/div[1]/div[2]/div[2]/div/form/div/div/div[2]/div/div[2]/div/p/span[2]')
-                    linha_atual[6].value = unidade_el.text
-                except Exception:
-                    linha_atual[6].value = 'N/A'
+                def buscar_texto(seletores, escopo=None):
+                    """Tenta uma lista de seletores CSS e retorna o primeiro texto não vazio."""
+                    alvo = escopo if escopo is not None else linha_dom
+                    for sel in seletores:
+                        try:
+                            el = alvo.find_element(By.CSS_SELECTOR, sel)
+                            txt = (el.text or "").strip()
+                            if txt:
+                                return txt
+                        except Exception:
+                            continue
+                    return ""
 
-                try:
-                    descri_el = driver.find_element(By.XPATH, '//*[@id="itemsAndServicesApp"]/div/div/div[1]/div[2]/div[2]/div/form/div/div/div[1]/div/div[2]/div/p')
-                    descri = descri_el.text
+                # --- QUANTIDADE ---
+                qtde = buscar_texto([".s-quantity .s-value"])
+                linha_atual[5].value = qtde if qtde else 'N/A'
+
+                # --- UNIDADE ---
+                unid = buscar_texto([".s-quantity .s-unit"])
+                linha_atual[6].value = unid if unid else 'N/A'
+
+                # --- DESCRIÇÃO (cascata: campo padrão -> custom field do Lance spot) ---
+                descri = buscar_texto([
+                    ".s-extended_description p.s-textField",
+                    ".s-request_line_custom_fields dd.itemReview span",
+                    ".s-request_line_custom_fields dd span",
+                ])
+                if descri:
                     desejado = re.search(r'PT\s*\|\|\s*(.*?)\*{3,}', descri, re.DOTALL)
                     linha_atual[4].value = desejado.group(1).strip() if desejado else descri
-                except Exception:
+                else:
                     linha_atual[4].value = 'N/A'
+                    log(f"  AVISO: descricao nao encontrada no evento {evento} item {idx+1}")
 
-                # Coleta do título da cotação (s-description)
-                try:
-                    titulo_el = driver.find_element(By.CSS_SELECTOR, ".s-description p.s-textField")
-                    titulo_raw = titulo_el.text.strip()
-                    linha_atual[1].value = titulo_raw.split("||")[0].strip()
-                except Exception:
+                # --- TÍTULO (aceita separador "||" ou "|") ---
+                titulo_raw = buscar_texto([".s-description p.s-textField"])
+                if titulo_raw:
+                    m_tit = re.match(r"^\s*(\d+)", titulo_raw)
+                    linha_atual[1].value = m_tit.group(1) if m_tit else titulo_raw.split("|")[0].strip()
+                else:
                     linha_atual[1].value = "Titulo nao encontrado"
 
-                log(f"  Item {idx + 1}/{total}: titulo={linha_atual[1].value!r} | uf={linha_atual[2].value!r} | qtde={linha_atual[5].value!r} | unid={linha_atual[6].value!r}")
+                # --- UF (cascata: endereço de entrega -> varredura geral da linha) ---
+                found = None
+                endereco_txt = buscar_texto([
+                    ".s-ship_to_address .s-itemsAndServicesAddressLine",
+                    ".s-ship_to_address .addressLines",
+                ])
 
-                # UF (versão mais robusta)
-                try:
-                    uf_spans = driver.find_elements(
-                        By.XPATH,
-                        '//*[@id="itemsAndServicesApp"]/div/div/div[1]/div[2]/div[2]/div/form/div/div/div[1]/div/div[8]/div/ul/li/span'
-                    )
-
-                    found = None
-                    # tenta primeiro padrão explícito "- XX - BR" em cada span
-                    for elem in uf_spans:
-                        text = (elem.text or "").strip().upper()
-                        if not text:
-                            continue
-                        m = re.search(r'-\s*([A-Z]{2})\s*-\s*BR', text)
-                        if m and m.group(1) in ESTADOS:
-                            found = m.group(1)
-                            break
-                        # procura tokens isolados de 2 letras e valida contra ESTADOS
-                        tokens = re.findall(r'\b[A-Z]{2}\b', text)
-                        for t in tokens:
+                if endereco_txt:
+                    texto = endereco_txt.upper()
+                    # padrão "CEP CIDADE UF"
+                    m_uf = re.search(r'\d{5}-?\d{3}\s+.+?\s+([A-Z]{2})\s*(?:\n|$)', texto)
+                    if m_uf and m_uf.group(1) in ESTADOS:
+                        found = m_uf.group(1)
+                    if not found:
+                        m_uf = re.search(r'-\s*([A-Z]{2})\s*-\s*BR', texto)
+                        if m_uf and m_uf.group(1) in ESTADOS:
+                            found = m_uf.group(1)
+                    if not found:
+                        for t in re.findall(r'\b[A-Z]{2}\b', texto):
                             if t in ESTADOS:
                                 found = t
                                 break
-                        if found:
-                            break
 
-                    # fallback: junta todo o texto e procura por siglas com bordas de palavra
-                    if not found:
-                        combined = " ".join([(e.text or "") for e in uf_spans]).upper()
-                        for sig in ESTADOS:
-                            if re.search(r'\b' + re.escape(sig) + r'\b', combined):
-                                found = sig
-                                break
+                # fallback: varre todo o texto da linha expandida
+                if not found:
+                    try:
+                        combined = (linha_dom.text or "").upper()
+                        m_uf = re.search(r'-\s*([A-Z]{2})\s*-\s*BR', combined)
+                        if m_uf and m_uf.group(1) in ESTADOS:
+                            found = m_uf.group(1)
+                        if not found:
+                            for sig in ESTADOS:
+                                if re.search(r'\b' + re.escape(sig) + r'\b', combined):
+                                    found = sig
+                                    break
+                    except Exception:
+                        pass
 
-                    linha_atual[2].value = found if found else 'UF não encontrada'
-                except Exception:
-                    linha_atual[2].value = 'N/A'
+                linha_atual[2].value = found if found else 'UF nao encontrada'
+                if not found:
+                    log(f"  AVISO: UF nao encontrada no evento {evento} item {idx+1}")
+
+                log(f"  Item {idx + 1}/{total}: titulo={linha_atual[1].value!r} | uf={linha_atual[2].value!r} | qtde={linha_atual[5].value!r} | unid={linha_atual[6].value!r}")
 
                 # fecha o detalhe (tenta vários métodos)
                 try:
