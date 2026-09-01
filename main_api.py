@@ -48,8 +48,8 @@ else:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Configurações do Portal Vale
-USER_VALE = os.getenv("VALE_USER", "emanuele@sevensuprimentos.com.br")
-PASS_VALE = os.getenv("VALE_PASS", "*Eas251080")
+USER_VALE = os.getenv("VALE_USER")
+PASS_VALE = os.getenv("VALE_PASS")
 
 def parse_date_str(s: str):
     """Tenta vários formatos e retorna datetime.date ou None."""
