@@ -20,6 +20,7 @@ def executar_funcao():
     import os
     import re
     import sys
+    import json
     import tkinter as tk
     from tkinter import simpledialog
 
@@ -63,13 +64,77 @@ def executar_funcao():
         'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
     ]
 
+    def obter_marcas_em_lote(descricoes: list, tamanho_lote: int = 60) -> list:
+        """Extrai a marca do produto a partir da DESCRIÇÃO via Gemini, em lote.
+        Retorna lista do mesmo tamanho/ordem de `descricoes`. Nunca propaga exceção."""
+        resultado = ["Marca nao encontrada"] * len(descricoes)
+
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            print("AVISO: GEMINI_API_KEY nao configurada. Pulando extracao de marca.")
+            return resultado
+
+        try:
+            from google import genai
+            from google.genai import types as genai_types
+        except Exception as e:
+            print(f"AVISO: SDK google-genai indisponivel ({e}). Pulando extracao de marca.")
+            return resultado
+
+        modelo = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+        client = genai.Client(api_key=api_key)
+
+        total = len(descricoes)
+        for inicio in range(0, total, tamanho_lote):
+            fim = min(inicio + tamanho_lote, total)
+            lote = descricoes[inicio:fim]
+
+            itens = "\n".join(f"{i}: {(desc or '').strip()}" for i, desc in enumerate(lote))
+            prompt = (
+                "Voce e um extrator de marcas de produtos industriais. Para cada item numerado "
+                "abaixo, identifique a MARCA do produto (fabricante), seguindo estas regras:\n"
+                "- So extraia a marca se ela estiver EXPLICITAMENTE escrita no texto. NUNCA "
+                "invente ou deduza uma marca a partir do tipo de produto.\n"
+                "- NUNCA retorne \"VALE\" como marca — e o nome do cliente comprador, nao do "
+                "fabricante.\n"
+                "- Se nao houver marca identificavel, retorne exatamente \"Marca nao encontrada\".\n"
+                "- Retorne a marca em maiusculas, sem codigo de peca junto.\n"
+                "- Responda APENAS com um JSON array puro, sem markdown, no formato: "
+                '[{"indice": N, "marca": "..."}]\n\n'
+                f"Itens:\n{itens}"
+            )
+
+            try:
+                response = client.models.generate_content(
+                    model=modelo,
+                    contents=prompt,
+                    config=genai_types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0,
+                    ),
+                )
+                dados = json.loads(response.text)
+                preenchidos = 0
+                for item in dados:
+                    idx = item.get("indice")
+                    marca = item.get("marca")
+                    if isinstance(idx, int) and 0 <= idx < len(lote) and marca:
+                        resultado[inicio + idx] = str(marca).strip().upper()
+                        preenchidos += 1
+                print(f"Marcas: lote {inicio}-{fim - 1}: {preenchidos}/{len(lote)} preenchidas.")
+            except Exception as e:
+                print(f"AVISO: falha ao obter marcas do lote {inicio}-{fim - 1}: {e}")
+                continue
+
+        return resultado
+
     # --- PREPARA PLANILHA ---
     if os.path.exists(EXCEL_PATH):
         os.remove(EXCEL_PATH)
     wb = Workbook()
     ws = wb.active
     ws.title = "Eventos"
-    ws.append(["Numero do evento", "Titulo", "UF(VALE)", "DATA", "DESCRIÇÃO", "QTDE", "UNID. MED", "pagina de descrição"])
+    ws.append(["Numero do evento", "Titulo", "UF(VALE)", "DATA", "DESCRIÇÃO", "QTDE", "UNID. MED", "pagina de descrição", "Marca"])
     wb.save(EXCEL_PATH)
 
     # --- INICIA SELENIUM ---
@@ -141,7 +206,7 @@ def executar_funcao():
                 data_final = colunas[3].text.strip()
                 print(f"Número do evento: {numero_evento} | Data final: {data_final}")
 
-                ws.append([numero_evento, '', '', data_final, '', '', '', ''])
+                ws.append([numero_evento, '', '', data_final, '', '', '', '', ''])
 
             except Exception as e:
                 print(f"⚠️ Não foi possível extrair dados da linha: {e}")
@@ -217,7 +282,7 @@ def executar_funcao():
         linhas_evento = [row]
         if len(elementos) > 1:
             for i in range(len(elementos) - 1):
-                nova_linha = [evento, row[1].value, row[2].value, row[3].value, '', '', '', '']
+                nova_linha = [evento, row[1].value, row[2].value, row[3].value, '', '', '', '', '']
                 ws.append(nova_linha)
             wb.save(EXCEL_PATH)
             linhas_evento = [r for r in ws.iter_rows(min_row=2) if r[0].value == evento]
@@ -458,6 +523,11 @@ def executar_funcao():
         wb = load_workbook(EXCEL_PATH)
         ws = wb["Eventos"]
         rows = list(ws.iter_rows(min_row=2, values_only=True))
+
+        descricoes = [r[4] if len(r) > 4 else '' for r in rows]
+        print(f"--- Extraindo marcas via Gemini para {len(descricoes)} item(ns) ---")
+        marcas = obter_marcas_em_lote(descricoes)
+        rows = [r[:8] + (marcas[i],) for i, r in enumerate(rows)]
 
         def sort_key(row):
             v = row[0]

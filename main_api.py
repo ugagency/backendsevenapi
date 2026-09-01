@@ -1,5 +1,7 @@
 import os
 import re
+import sys
+import json
 import time
 from datetime import datetime
 from fastapi import FastAPI, BackgroundTasks, HTTPException
@@ -14,6 +16,12 @@ from webdriver_manager.chrome import ChromeDriverManager
 from openpyxl import Workbook, load_workbook
 from supabase import create_client, Client
 from dotenv import load_dotenv
+
+# Proteção contra caracteres não-ASCII (emojis, acentos, texto vindo do Gemini) quebrando
+# o stdout/stderr no Windows, cujo encoding padrão do console (cp1252) não os suporta.
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # Carregar variáveis de ambiente (.env)
 load_dotenv()
@@ -55,11 +63,77 @@ def parse_date_str(s: str):
 def log(msg: str):
     print(f"[{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] {msg}", flush=True)
 
-def executar_robo_selenium(data_usuario: str, filename: str):
+def obter_marcas_em_lote(descricoes: list, tamanho_lote: int = 60) -> list:
+    """Extrai a marca do produto a partir da DESCRIÇÃO via Gemini, em lote.
+    Retorna lista do mesmo tamanho/ordem de `descricoes`. Nunca propaga exceção."""
+    resultado = ["Marca nao encontrada"] * len(descricoes)
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        log("AVISO: GEMINI_API_KEY nao configurada. Pulando extracao de marca.")
+        return resultado
+
+    try:
+        from google import genai
+        from google.genai import types as genai_types
+    except Exception as e:
+        log(f"AVISO: SDK google-genai indisponivel ({e}). Pulando extracao de marca.")
+        return resultado
+
+    modelo = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    client = genai.Client(api_key=api_key)
+
+    total = len(descricoes)
+    for inicio in range(0, total, tamanho_lote):
+        fim = min(inicio + tamanho_lote, total)
+        lote = descricoes[inicio:fim]
+
+        itens = "\n".join(f"{i}: {(desc or '').strip()}" for i, desc in enumerate(lote))
+        prompt = (
+            "Voce e um extrator de marcas de produtos industriais. Para cada item numerado "
+            "abaixo, identifique a MARCA do produto (fabricante), seguindo estas regras:\n"
+            "- So extraia a marca se ela estiver EXPLICITAMENTE escrita no texto. NUNCA "
+            "invente ou deduza uma marca a partir do tipo de produto.\n"
+            "- NUNCA retorne \"VALE\" como marca — e o nome do cliente comprador, nao do "
+            "fabricante.\n"
+            "- Se nao houver marca identificavel, retorne exatamente \"Marca nao encontrada\".\n"
+            "- Retorne a marca em maiusculas, sem codigo de peca junto.\n"
+            "- Responda APENAS com um JSON array puro, sem markdown, no formato: "
+            '[{"indice": N, "marca": "..."}]\n\n'
+            f"Itens:\n{itens}"
+        )
+
+        try:
+            response = client.models.generate_content(
+                model=modelo,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0,
+                ),
+            )
+            dados = json.loads(response.text)
+            preenchidos = 0
+            for item in dados:
+                idx = item.get("indice")
+                marca = item.get("marca")
+                if isinstance(idx, int) and 0 <= idx < len(lote) and marca:
+                    resultado[inicio + idx] = str(marca).strip().upper()
+                    preenchidos += 1
+            log(f"Marcas: lote {inicio}-{fim - 1}: {preenchidos}/{len(lote)} preenchidas.")
+        except Exception as e:
+            log(f"AVISO: falha ao obter marcas do lote {inicio}-{fim - 1}: {e}")
+            continue
+
+    return resultado
+
+def executar_robo_selenium(data_usuario: str, filename: str, pular_verificacao_duplicados: bool = False):
     """Lógica principal do robô Selenium refatorada para rodar sem interface (headless)."""
 
     inicio_total = time.time()
     log(f"=== ROBÔ INICIADO | data={data_usuario} | arquivo={filename} ===")
+    if pular_verificacao_duplicados:
+        log("MODO TESTE: verificacao de eventos duplicados DESATIVADA - eventos ja existentes serao reprocessados")
 
     # 1. Preparar data (Aceita 6 ou 8 dígitos: DDMMAA ou DDMMAAAA)
     if len(data_usuario) == 6:
@@ -104,7 +178,7 @@ def executar_robo_selenium(data_usuario: str, filename: str):
         wb = Workbook()
         ws = wb.active
         ws.title = "Eventos"
-        ws.append(["Numero do evento", "Titulo", "UF(VALE)", "DATA", "DESCRIÇÃO", "QTDE", "UNID. MED", "pagina de descrição"])
+        ws.append(["Numero do evento", "Titulo", "UF(VALE)", "DATA", "DESCRIÇÃO", "QTDE", "UNID. MED", "pagina de descrição", "Marca"])
         
         wait = WebDriverWait(driver, 20)
         log("Acessando página de login...")
@@ -172,18 +246,19 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                         numero_evento = colunas[0].find_element(By.TAG_NAME, "a").text.strip()
 
                         # Verifica se o evento já existe no banco de dados
-                        try:
-                            res_db = supabase.table("eventos_coletados").select("id").eq("numero_evento", numero_evento).execute()
-                            if res_db.data:
-                                log(f"AVISO: Evento {numero_evento} ja existe no banco. Pulando.")
-                                continue
-                        except Exception as e_db:
-                            log(f"ERRO ao verificar evento {numero_evento} no banco: {e_db}")
+                        if not pular_verificacao_duplicados:
+                            try:
+                                res_db = supabase.table("eventos_coletados").select("id").eq("numero_evento", numero_evento).execute()
+                                if res_db.data:
+                                    log(f"AVISO: Evento {numero_evento} ja existe no banco. Pulando.")
+                                    continue
+                            except Exception as e_db:
+                                log(f"ERRO ao verificar evento {numero_evento} no banco: {e_db}")
 
                         data_final = colunas[3].text.strip()
                         total_coletados += 1
                         log(f"  [{total_coletados}] Evento coletado: {numero_evento} | prazo: {data_final}")
-                        ws.append([numero_evento, '', '', data_final, '', '', '', ''])
+                        ws.append([numero_evento, '', '', data_final, '', '', '', '', ''])
                     except Exception as e:
                         log(f"ERRO na linha {i} da pagina {pagina}: {e}")
                         continue
@@ -243,27 +318,27 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                 seletor_atual = (By.CLASS_NAME, "s-expandLines")
                 query_css = ".s-expandLines"
             except:
-                print("⚠️ s-expandLines não encontrado, tentando fallback...")
+                log("⚠️ s-expandLines não encontrado, tentando fallback...")
                 fallback_css = ".sidebar.-supplier.-borderLeft.flexPosition__element.-shrink.s-expandSidebar.-clickable"
                 try:
                     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, fallback_css)))
                     seletor_atual = (By.CSS_SELECTOR, fallback_css)
                     query_css = fallback_css
                 except:
-                    print(f"⚠️ Nenhum seletor de expansão encontrado no evento {evento}")
+                    log(f"⚠️ Nenhum seletor de expansão encontrado no evento {evento}")
                     continue
 
             elementos = driver.find_elements(*seletor_atual)
 
             if not elementos:
-                print(f"⚠️ Nenhum elemento de expansão encontrado no evento {evento}")
+                log(f"⚠️ Nenhum elemento de expansão encontrado no evento {evento}")
                 continue
 
             # Duplicar a linha do evento pelo número de elementos encontrados
             linhas_evento = [row]
             if len(elementos) > 1:
                 for i in range(len(elementos) - 1):
-                    nova_linha = [evento, row[1].value, row[2].value, row[3].value, '', '', '', '']
+                    nova_linha = [evento, row[1].value, row[2].value, row[3].value, '', '', '', '', '']
                     ws.append(nova_linha)
                 wb.save(EXCEL_PATH)
                 linhas_evento = [r for r in ws.iter_rows(min_row=2) if r[0].value == evento]
@@ -293,7 +368,7 @@ def executar_robo_selenium(data_usuario: str, filename: str):
             # determina quantos existem no DOM no momento
             total = driver.execute_script(f"return document.querySelectorAll('{query_css}').length")
             if total == 0:
-                print(f"⚠️ Nenhum elemento de expansão encontrado no evento {evento}")
+                log(f"⚠️ Nenhum elemento de expansão encontrado no evento {evento}")
                 continue
 
             # duplicar linha já feito acima; garante linhas_evento atualizado
@@ -317,7 +392,7 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                         elementos = driver.find_elements(By.CLASS_NAME, "s-expandLines")
                         retry_try += 1
                     if idx >= len(elementos):
-                        print(f"⚠️ Índice {idx} fora do range atual ({len(elementos)}). Pulando.")
+                        log(f"⚠️ Índice {idx} fora do range atual ({len(elementos)}). Pulando.")
                         idx += 1
                         continue
 
@@ -336,7 +411,7 @@ def executar_robo_selenium(data_usuario: str, filename: str):
 
                 # tenta clicar de forma robusta
                 if not click_element_retry(el, attempts=4, pause=0.4):
-                    print(f"⚠️ Falha ao clicar no expandLines index {idx} do evento {evento}")
+                    log(f"⚠️ Falha ao clicar no expandLines index {idx} do evento {evento}")
                     # marca como processado para não travar loop
                     try:
                         driver.execute_script("arguments[0].setAttribute('data-processed','1')", el)
@@ -362,7 +437,7 @@ def executar_robo_selenium(data_usuario: str, filename: str):
                     if linhas_evento:
                         linha_atual = linhas_evento[-1]
                     else:
-                        print(f"⚠️ Não há linha disponível para evento {evento} no idx {idx}")
+                        log(f"⚠️ Não há linha disponível para evento {evento} no idx {idx}")
                         # marca e segue
                         try:
                             driver.execute_script("arguments[0].setAttribute('data-processed','1')", el)
@@ -510,6 +585,11 @@ def executar_robo_selenium(data_usuario: str, filename: str):
             ws = wb["Eventos"]
             rows = list(ws.iter_rows(min_row=2, values_only=True))
 
+            descricoes = [r[4] if len(r) > 4 else '' for r in rows]
+            log(f"--- Extraindo marcas via Gemini para {len(descricoes)} item(ns) ---")
+            marcas = obter_marcas_em_lote(descricoes)
+            rows = [r[:8] + (marcas[i],) for i, r in enumerate(rows)]
+
             def sort_key(row):
                 v = row[0]
                 if v is None:
@@ -532,24 +612,27 @@ def executar_robo_selenium(data_usuario: str, filename: str):
             for r in rows_sorted:
                 ws.append(list(r))
                 ne = str(r[0]).strip()
-                if ne and ne != "None" and ne not in vistos_db:
-                    vistos_db.add(ne)
+                titulo = str(r[1]) if len(r) > 1 and r[1] is not None else ""
+                chave = (ne, titulo)
+                if ne and ne != "None" and chave not in vistos_db:
+                    vistos_db.add(chave)
                     eventos_para_inserir.append({
                         "numero_evento": ne,
-                        "titulo": str(r[1]) if len(r) > 1 and r[1] is not None else "",
+                        "titulo": titulo,
                         "uf": str(r[2]) if r[2] is not None else "",
                         "data_evento": str(r[3]) if r[3] is not None else "",
                         "descricao": str(r[4]) if r[4] is not None else "",
                         "quantidade": str(r[5]) if r[5] is not None else "",
-                        "unidade": str(r[6]) if r[6] is not None else ""
+                        "unidade": str(r[6]) if r[6] is not None else "",
+                        "marca": str(r[8]) if len(r) > 8 and r[8] is not None else ""
                     })
 
             wb.save(EXCEL_PATH)
-            
+
             # Salva os novos eventos no banco de dados para evitar futuras duplicidades
             if eventos_para_inserir:
                 try:
-                    supabase.table("eventos_coletados").upsert(eventos_para_inserir).execute()
+                    supabase.table("eventos_coletados").upsert(eventos_para_inserir, on_conflict="numero_evento,titulo").execute()
                     log(f"Banco atualizado: {len(eventos_para_inserir)} evento(s) inserido(s)/atualizados.")
                 except Exception as e_db:
                     log(f"ERRO ao inserir eventos no banco: {e_db}")
@@ -570,12 +653,14 @@ def executar_robo_selenium(data_usuario: str, filename: str):
         res = supabase.storage.from_(SUPABASE_BUCKET).get_public_url(filename)
         log(f"Upload concluido. URL publica: {res}")
 
-    except Exception as e:
-        log(f"ERRO FATAL no robô: {e}")
-    finally:
-        driver.quit()
         if os.path.exists(EXCEL_PATH):
             os.remove(EXCEL_PATH)
+
+    except Exception as e:
+        log(f"ERRO FATAL no robô: {e}")
+        log(f"Arquivo Excel preservado para recuperacao manual em: {EXCEL_PATH}")
+    finally:
+        driver.quit()
         elapsed = time.time() - inicio_total
         log(f"=== ROBÔ FINALIZADO | tempo total: {elapsed:.1f}s ===")
 
@@ -584,21 +669,22 @@ def read_root():
     return {"status": "Backend Online", "projeto": "Seven Suprimentos - Automação Vale"}
 
 @app.post("/run-robot")
-def run_robot(data: str, background_tasks: BackgroundTasks):
+def run_robot(data: str, background_tasks: BackgroundTasks, pular_verificacao_duplicados: bool = False):
     """Inicia o robô como uma tarefa de fundo."""
     if not data or len(data) not in [6, 8]:
         raise HTTPException(status_code=400, detail="Data deve estar no formato DDMMAA ou DDMMAAAA")
-    
+
     # Padroniza para DDMMAA para gerar o nome do arquivo, mas passa a data completa
     data_formatada = data if len(data) == 6 else f"{data[:4]}{data[6:]}"
     filename = f"eventos_{data_formatada}_{int(time.time())}.xlsx"
-    
-    background_tasks.add_task(executar_robo_selenium, data, filename)
-    
+
+    background_tasks.add_task(executar_robo_selenium, data, filename, pular_verificacao_duplicados)
+
     return {
         "status": "Iniciado",
         "message": f"Robô iniciado para a data {data}. O arquivo será enviado para o Supabase Storage em alguns minutos.",
-        "filename": filename
+        "filename": filename,
+        "modo_teste_duplicados": pular_verificacao_duplicados
     }
 
 if __name__ == "__main__":
