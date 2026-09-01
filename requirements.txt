@@ -4,5 +4,6 @@ selenium
 webdriver-manager
 openpyxl
 supabase
+google-genai
 python-dotenv
 python-multipart
