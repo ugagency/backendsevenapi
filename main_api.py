@@ -3,6 +3,7 @@ import re
 import sys
 import json
 import time
+import threading
 from datetime import datetime
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,9 +48,46 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 else:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Configurações do Portal Vale
-USER_VALE = os.getenv("VALE_USER")
-PASS_VALE = os.getenv("VALE_PASS")
+# Configurações do Portal Vale — uma conta Coupa por CNPJ/filial.
+# Conta 1 usa as variáveis legadas VALE_USER / VALE_PASS (compatível com o .env atual).
+# Contas seguintes usam sufixo numérico: VALE_USER_2 / VALE_PASS_2, VALE_USER_3 / VALE_PASS_3...
+# Opcionais por conta: VALE_CONTA_ID[_N] (identificador gravado no banco, padrão "filialN")
+# e VALE_CONTA_NOME[_N] (nome exibido no frontend, padrão "Filial N").
+CONTA_ID_RE = re.compile(r"^[a-z0-9_-]{1,30}$")
+
+def carregar_contas_coupa() -> dict:
+    contas = {}
+    for n in range(1, 10):
+        suf = "" if n == 1 else f"_{n}"
+        user = (os.getenv(f"VALE_USER{suf}") or "").strip()
+        senha = os.getenv(f"VALE_PASS{suf}") or ""
+        if not user or not senha:
+            continue
+        conta_id = (os.getenv(f"VALE_CONTA_ID{suf}") or f"filial{n}").strip().lower()
+        if not CONTA_ID_RE.match(conta_id):
+            print(f"ERRO: VALE_CONTA_ID{suf}='{conta_id}' invalido (use a-z, 0-9, _ ou -). Conta ignorada.")
+            continue
+        if conta_id in contas:
+            print(f"ERRO: VALE_CONTA_ID{suf}='{conta_id}' repetido. Conta ignorada.")
+            continue
+        contas[conta_id] = {
+            "id": conta_id,
+            "nome": (os.getenv(f"VALE_CONTA_NOME{suf}") or f"Filial {n}").strip(),
+            "user": user,
+            "senha": senha,
+        }
+    return contas
+
+CONTAS_COUPA = carregar_contas_coupa()
+CONTA_PADRAO = next(iter(CONTAS_COUPA), None)
+if not CONTAS_COUPA:
+    print("ERRO: nenhuma conta Coupa configurada (VALE_USER / VALE_PASS).")
+
+# Só um Chrome por vez: o VPS é compartilhado e duas sessões simultâneas
+# no Coupa já foram observadas em teste. Uvicorn roda com 1 worker, então
+# um lock de processo é suficiente.
+ROBO_LOCK = threading.Lock()
+ESTADO_ROBO = {"executando": False, "conta": None, "data": None, "inicio": None, "ultima_execucao": None}
 
 def parse_date_str(s: str):
     """Tenta vários formatos e retorna datetime.date ou None."""
@@ -127,11 +165,13 @@ def obter_marcas_em_lote(descricoes: list, tamanho_lote: int = 60) -> list:
 
     return resultado
 
-def executar_robo_selenium(data_usuario: str, filename: str, pular_verificacao_duplicados: bool = False):
-    """Lógica principal do robô Selenium refatorada para rodar sem interface (headless)."""
+def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pular_verificacao_duplicados: bool = False) -> str:
+    """Lógica principal do robô Selenium refatorada para rodar sem interface (headless).
+    Retorna "ok" ou uma descrição curta do erro."""
 
+    conta = CONTAS_COUPA[conta_id]
     inicio_total = time.time()
-    log(f"=== ROBÔ INICIADO | data={data_usuario} | arquivo={filename} ===")
+    log(f"=== ROBÔ INICIADO | conta={conta_id} | data={data_usuario} | arquivo={filename} ===")
     if pular_verificacao_duplicados:
         log("MODO TESTE: verificacao de eventos duplicados DESATIVADA - eventos ja existentes serao reprocessados")
 
@@ -144,7 +184,7 @@ def executar_robo_selenium(data_usuario: str, filename: str, pular_verificacao_d
     HOJE = parse_date_str(HOJE_str)
     if not HOJE:
         log(f"ERRO: Não foi possível converter a data '{data_usuario}'")
-        return
+        return "data invalida"
 
     # 2. Configurar Selenium Headless para o Servidor (Railway/Docker)
     chrome_options = Options()
@@ -186,9 +226,16 @@ def executar_robo_selenium(data_usuario: str, filename: str, pular_verificacao_d
 
         # Login
         wait.until(EC.presence_of_element_located((By.ID, "user_login")))
-        driver.find_element(By.ID, "user_login").send_keys(USER_VALE)
-        driver.find_element(By.ID, "user_password").send_keys(PASS_VALE, Keys.RETURN)
-        log("Login enviado. Aguardando carregamento...")
+        driver.find_element(By.ID, "user_login").send_keys(conta["user"])
+        driver.find_element(By.ID, "user_password").send_keys(conta["senha"], Keys.RETURN)
+        log(f"Login enviado (conta {conta_id}). Aguardando carregamento...")
+
+        # Se o formulário de login continuar na tela, a credencial foi recusada.
+        # Sem essa checagem o robô seguia e subia uma planilha vazia como se tivesse dado certo.
+        try:
+            WebDriverWait(driver, 30).until(EC.invisibility_of_element_located((By.ID, "user_login")))
+        except Exception:
+            raise RuntimeError(f"Login no Coupa falhou para a conta {conta_id} (formulario de login ainda visivel)")
 
         # Filtro de data (mesma lógica)
         try:
@@ -248,7 +295,13 @@ def executar_robo_selenium(data_usuario: str, filename: str, pular_verificacao_d
                         # Verifica se o evento já existe no banco de dados
                         if not pular_verificacao_duplicados:
                             try:
-                                res_db = supabase.table("eventos_coletados").select("id").eq("numero_evento", numero_evento).execute()
+                                res_db = (
+                                    supabase.table("eventos_coletados")
+                                    .select("id")
+                                    .eq("conta", conta_id)
+                                    .eq("numero_evento", numero_evento)
+                                    .execute()
+                                )
                                 if res_db.data:
                                     log(f"AVISO: Evento {numero_evento} ja existe no banco. Pulando.")
                                     continue
@@ -683,6 +736,7 @@ def executar_robo_selenium(data_usuario: str, filename: str, pular_verificacao_d
                 if ne and ne != "None" and chave not in vistos_db:
                     vistos_db.add(chave)
                     eventos_para_inserir.append({
+                        "conta": conta_id,
                         "numero_evento": ne,
                         "titulo": titulo,
                         "uf": str(r[2]) if r[2] is not None else "",
@@ -698,7 +752,7 @@ def executar_robo_selenium(data_usuario: str, filename: str, pular_verificacao_d
             # Salva os novos eventos no banco de dados para evitar futuras duplicidades
             if eventos_para_inserir:
                 try:
-                    supabase.table("eventos_coletados").upsert(eventos_para_inserir, on_conflict="numero_evento,titulo").execute()
+                    supabase.table("eventos_coletados").upsert(eventos_para_inserir, on_conflict="conta,numero_evento,titulo").execute()
                     log(f"Banco atualizado: {len(eventos_para_inserir)} evento(s) inserido(s)/atualizados.")
                 except Exception as e_db:
                     log(f"ERRO ao inserir eventos no banco: {e_db}")
@@ -721,35 +775,108 @@ def executar_robo_selenium(data_usuario: str, filename: str, pular_verificacao_d
 
         if os.path.exists(EXCEL_PATH):
             os.remove(EXCEL_PATH)
+        return "ok"
 
     except Exception as e:
-        log(f"ERRO FATAL no robô: {e}")
+        log(f"ERRO FATAL no robô (conta {conta_id}): {e}")
         log(f"Arquivo Excel preservado para recuperacao manual em: {EXCEL_PATH}")
+        return f"erro: {e}"
     finally:
         driver.quit()
         elapsed = time.time() - inicio_total
-        log(f"=== ROBÔ FINALIZADO | tempo total: {elapsed:.1f}s ===")
+        log(f"=== ROBÔ FINALIZADO | conta={conta_id} | tempo total: {elapsed:.1f}s ===")
+
+def nome_arquivo(conta_id: str, data_formatada: str) -> str:
+    # A primeira conta mantém o nome de arquivo de sempre, para não quebrar
+    # nada que dependa dele; as demais levam o identificador da conta.
+    if conta_id == CONTA_PADRAO:
+        return f"eventos_{data_formatada}_{int(time.time())}.xlsx"
+    return f"eventos_{conta_id}_{data_formatada}_{int(time.time())}.xlsx"
+
+def executar_fila(data: str, data_formatada: str, contas: list, pular_verificacao_duplicados: bool):
+    """Roda as contas em sequência e libera o lock no final, aconteça o que acontecer."""
+    resultados = {}
+    try:
+        for conta_id in contas:
+            ESTADO_ROBO.update({"conta": conta_id, "inicio": datetime.now().isoformat(timespec="seconds")})
+            try:
+                resultados[conta_id] = executar_robo_selenium(
+                    data, nome_arquivo(conta_id, data_formatada), conta_id, pular_verificacao_duplicados
+                )
+            except Exception as e:
+                log(f"ERRO FATAL ao iniciar robô da conta {conta_id}: {e}")
+                resultados[conta_id] = f"erro: {e}"
+    finally:
+        ESTADO_ROBO.update({
+            "executando": False,
+            "conta": None,
+            "inicio": None,
+            "ultima_execucao": {
+                "data": data,
+                "fim": datetime.now().isoformat(timespec="seconds"),
+                "resultados": resultados,
+            },
+        })
+        ROBO_LOCK.release()
 
 @app.get("/")
 def read_root():
     return {"status": "Backend Online", "projeto": "Seven Suprimentos - Automação Vale"}
 
+@app.get("/contas")
+def listar_contas():
+    """Contas Coupa configuradas no servidor. Nunca expõe usuário ou senha."""
+    return {
+        "padrao": CONTA_PADRAO,
+        "contas": [{"id": c["id"], "nome": c["nome"]} for c in CONTAS_COUPA.values()],
+    }
+
+@app.get("/status")
+def status_robo():
+    return ESTADO_ROBO
+
 @app.post("/run-robot")
-def run_robot(data: str, background_tasks: BackgroundTasks, pular_verificacao_duplicados: bool = False):
-    """Inicia o robô como uma tarefa de fundo."""
-    if not data or len(data) not in [6, 8]:
+def run_robot(data: str, background_tasks: BackgroundTasks, conta: str = "", pular_verificacao_duplicados: bool = False):
+    """Inicia o robô como uma tarefa de fundo.
+    conta: id da conta Coupa (ver /contas). Vazio = conta padrão. "todas" = todas em sequência."""
+    if not data or len(data) not in [6, 8] or not data.isdigit():
         raise HTTPException(status_code=400, detail="Data deve estar no formato DDMMAA ou DDMMAAAA")
+    if not CONTAS_COUPA:
+        raise HTTPException(status_code=500, detail="Nenhuma conta Coupa configurada no servidor.")
+
+    conta = (conta or "").strip().lower()
+    if not conta:
+        contas = [CONTA_PADRAO]
+    elif conta == "todas":
+        contas = list(CONTAS_COUPA)
+    elif conta in CONTAS_COUPA:
+        contas = [conta]
+    else:
+        raise HTTPException(status_code=400, detail=f"Conta '{conta}' nao configurada. Disponiveis: {', '.join(CONTAS_COUPA)}")
+
+    if not ROBO_LOCK.acquire(blocking=False):
+        em_uso = ESTADO_ROBO.get("conta") or "outra conta"
+        raise HTTPException(
+            status_code=409,
+            detail=f"O robô já está em execução ({em_uso}, data {ESTADO_ROBO.get('data')}). Aguarde terminar para iniciar outra.",
+        )
+    ESTADO_ROBO.update({"executando": True, "data": data, "conta": contas[0]})
 
     # Padroniza para DDMMAA para gerar o nome do arquivo, mas passa a data completa
     data_formatada = data if len(data) == 6 else f"{data[:4]}{data[6:]}"
-    filename = f"eventos_{data_formatada}_{int(time.time())}.xlsx"
 
-    background_tasks.add_task(executar_robo_selenium, data, filename, pular_verificacao_duplicados)
+    try:
+        background_tasks.add_task(executar_fila, data, data_formatada, contas, pular_verificacao_duplicados)
+    except Exception:
+        ESTADO_ROBO["executando"] = False
+        ROBO_LOCK.release()
+        raise
 
+    nomes = ", ".join(CONTAS_COUPA[c]["nome"] for c in contas)
     return {
         "status": "Iniciado",
-        "message": f"Robô iniciado para a data {data}. O arquivo será enviado para o Supabase Storage em alguns minutos.",
-        "filename": filename,
+        "message": f"Robô iniciado para a data {data} ({nomes}). O arquivo será enviado para o Supabase Storage em alguns minutos.",
+        "contas": contas,
         "modo_teste_duplicados": pular_verificacao_duplicados
     }
 
