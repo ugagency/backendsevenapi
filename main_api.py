@@ -811,7 +811,10 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
                 log(f"SIMULACAO: {len(eventos_para_inserir)} evento(s) NAO foram gravados no banco.")
             elif eventos_para_inserir:
                 try:
-                    supabase.table("eventos_coletados").upsert(eventos_para_inserir, on_conflict="conta,numero_evento,titulo").execute()
+                    # Upsert precisa de UPDATE quando o evento ja existe; a chave publica so tem INSERT
+                    # (RLS), entao a gravacao usa a chave de servidor quando ela esta configurada.
+                    cliente_gravacao = supabase_admin if supabase_admin is not None else supabase
+                    cliente_gravacao.table("eventos_coletados").upsert(eventos_para_inserir, on_conflict="conta,numero_evento,titulo").execute()
                     log(f"Banco atualizado: {len(eventos_para_inserir)} evento(s) inserido(s)/atualizados.")
                 except Exception as e_db:
                     log(f"ERRO ao inserir eventos no banco: {e_db}")
