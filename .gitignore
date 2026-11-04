@@ -2,3 +2,6 @@
 *.env
 venv
 __pycache__/
+
+# saidas do modo simulacao
+saida_teste/
