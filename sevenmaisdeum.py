@@ -30,11 +30,25 @@ def executar_funcao():
         filetypes=[("Excel files", "*.xlsx")],
         title="Salvar planilha como"
     )
-    USER = "emanuele@sevensuprimentos.com.br"
-    PASS = "*Eas251080"
+    # Credenciais nunca ficam no código: vêm do .env (VALE_USER / VALE_PASS)
+    # ou são pedidas na hora, se não houver .env na máquina.
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except Exception:
+        pass
+    USER = os.getenv("VALE_USER")
+    PASS = os.getenv("VALE_PASS")
 
     root = tk.Tk()
     root.withdraw()
+    if not USER:
+        USER = simpledialog.askstring(title="Coupa", prompt="Usuario do portal Coupa (Vale):")
+    if not PASS:
+        PASS = simpledialog.askstring(title="Coupa", prompt="Senha do portal Coupa (Vale):", show="*")
+    if not USER or not PASS:
+        print("Credenciais do Coupa nao informadas. Encerrando.")
+        return
     data_usuario = simpledialog.askstring(
         title="Input",
         prompt="Digite a data desejada no formato DDMMAA (ex: 190825 para 19/08/25):"
