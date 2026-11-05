@@ -17,7 +17,7 @@ Fechar o que o termo exige (exportação completa e auditoria consultável), vir
 - Corte: `/` redireciona para `/os`, com a tela atual dentro de Captura.
 - Retirada do plano B do `.env` e apagamento das senhas do Coupa do `.env` da VPS.
 - Treinamento da equipe.
-- Fechamento de segurança, por último: trancar leitura e inserção públicas em `eventos_coletados`, restringir alteração e exclusão no bucket `planilhas`, apagar `user_settings` e trocar as senhas do Coupa. Antes, confirmar que o robô grava com a chave de servidor e que nenhum fluxo externo (n8n) lê `user_settings`.
+- Fechamento de segurança, por último: trancar leitura e inserção públicas em `eventos_coletados`, restringir alteração e exclusão no bucket `planilhas`, apagar `user_settings` e trocar as senhas do Coupa. Antes, confirmar que o robô grava com a chave de servidor e que nenhum fluxo externo lê `user_settings`.
 
 ## Como funciona: corte
 
