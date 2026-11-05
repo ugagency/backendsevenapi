@@ -16,7 +16,7 @@ Garantir que cada pessoa veja e faça só o que o perfil dela permite, em todas 
 - Acesso interno de suporte da SSYS, sem preço, auditado.
 - Liberação de contas e portais por usuário.
 - Telas de usuários, contas e portais, credenciais e parâmetros.
-- Proteger as rotas do robô: `/run-robot` e `/status` exigem login e perfil.
+- Fica para o fechamento (Spec 09), em duas etapas: proteger as rotas do robô: `/run-robot` e `/status` exigem login e perfil.
 
 ## Fora
 
@@ -81,7 +81,7 @@ Permissões no código, como lista fixa: `fila.ver`, `captura.rodar`, `captura.b
 
 ## Regras
 
-- Usuário novo nasce inativo e sem contas.
+- Usuário novo nasce inativo e sem contas no OS. O cadastro aberto do Supabase Auth continua até o corte (Spec 09): quem criar conta pela tela de login entra como operador no sistema atual, mas não acessa o OS sem ativação.
 - Toda mudança de perfil, conta ou parâmetro vai para a auditoria.
 - Acesso do suporte SSYS fica registrado na auditoria (termo, itens 3.1.b e 3.1.d).
 - Colunas restritas somem também da exportação e das respostas do assistente.
@@ -90,14 +90,14 @@ Permissões no código, como lista fixa: `fila.ver`, `captura.rodar`, `captura.b
 
 - Usuário de Cotação não vê margem em nenhuma tela, exportação ou resposta da API.
 - Usuário sem conta liberada não vê nenhum item daquela conta.
-- `/run-robot` sem token retorna 401, e a Karen continua rodando pela tela `/` (o front passa a enviar o token antes de o backend exigir).
+- `/run-robot` sem token retorna 401, e a Karen continua rodando pela tela `/` (só no fechamento, Spec 09, em duas etapas: o front passa a enviar o token antes de o backend exigir). Até lá as rotas atuais ficam abertas; as rotas novas do OS (`/os`) exigem login desde o início.
 - Credencial nova cadastrada pela tela é usada pelo robô na próxima rodada, com origem "banco" no log.
 
 ## Testes
 
 - Teste por perfil em cada rota com dado restrito.
 - Teste de exportação por perfil.
-- Teste de rota do robô em duas etapas: primeiro o front envia o token; depois o backend exige.
+- No fechamento: teste de rota do robô em duas etapas: primeiro o front envia o token; depois o backend exige.
 
 ## Pendências
 

@@ -62,5 +62,6 @@ Objetivo, dentro e fora, como funciona, dados, API, telas, permissões, regras, 
 - Declinar é descarte interno, guardado com motivo e recorrência.
 - Horários e rodadas do robô configuráveis pelo Administrador.
 - WhatsApp, ligar e registrar retorno: depois da Etapa 5.
+- Ficam no corte ou no fechamento (Spec 09): exigir login em `/run-robot` e `/status`, tirar "Criar Conta Nova", repositório privado e revogar `eh_admin()` para anônimo. Na Fase 0 sai a rota `/api/start-n8n` do front.
 - Fechamento de segurança (trancar `eventos_coletados`, restringir o bucket, apagar `user_settings`) fica por último. `credenciais_coupa` fica e pode ser alterada.
 - Login pelo Supabase Auth. Senhas dos portais cifradas no Supabase; `.env` como plano B temporário só para as duas contas atuais.

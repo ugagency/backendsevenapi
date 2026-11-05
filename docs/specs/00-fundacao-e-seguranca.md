@@ -19,10 +19,11 @@ Preparar o terreno para construir o OS no mesmo Supabase da produção sem risco
 6. Versionar `docker-compose.yml`, script de deploy e configuração do Nginx da VPS.
 7. Esqueleto do serviço `os_api` (FastAPI) em container próprio, escutando só em 127.0.0.1, com rota própria no Nginx.
 8. Tabela de auditoria (`os.auditoria`) e o mecanismo de gravação, já na fundação.
-9. Desligar o cadastro aberto: tirar "Criar Conta Nova" e criar perfil inativo por padrão.
-10. Repositório do backend privado.
-11. Corrigir os avisos do Supabase: `eh_admin()` executável por anônimo e proteção contra senha vazada desligada.
+9. Fica para o corte (Spec 09): desligar o cadastro aberto, tirando "Criar Conta Nova" e criando perfil inativo por padrão.
+10. Fica para o fechamento (Spec 09): repositório do backend privado, depois de confirmar como a VPS baixa o código.
+11. Fica para o fechamento (Spec 09), depois de testar: corrigir os avisos do Supabase: `eh_admin()` executável por anônimo e proteção contra senha vazada desligada.
 12. Manter `credenciais_coupa` (criada em 04/11, vazia) como a tabela de senhas do OS. Ela pode ser alterada para receber o portal e o que mais for preciso. A tabela antiga `user_settings` (2 linhas com e-mail e senha do Coupa em texto puro, que o código atual não usa) fica para o fechamento de segurança (Spec 09).
+13. Remover do front a rota `/api/start-n8n` (aponta para um webhook externo e nada a chama) e o comentário sobre n8n em `page.tsx`. O n8n só volta no agente.
 
 ## Fora
 
@@ -84,7 +85,7 @@ Nenhuma nova nesta spec. Perfis entram na Spec 01.
 - `os_app` falha ao tentar escrever em `eventos_coletados` e ao ler `credenciais_coupa`.
 - `os_api` sobe e cai sem reiniciar o serviço atual.
 - Planilha de uma data real igual à de produção depois do merge.
-- Botão "Criar Conta Nova" fora; usuário novo nasce inativo.
+- Botão "Criar Conta Nova" fica para o corte.
 
 ## Testes
 
