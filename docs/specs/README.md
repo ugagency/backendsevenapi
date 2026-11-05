@@ -2,7 +2,7 @@
 
 Rascunho de 05/11/2026. Fonte: documento "Seven OS: escopo do produto", plano de evolução, proposta V3.5, termo de confidencialidade e decisões da SSYS de 05/11.
 
-Cada spec é uma entrega. Termina em merge na main com o conteúdo novo invisível para a Karen (rotas `/os`, schema `os`). A ordem abaixo é a ordem de construção.
+Cada spec é uma entrega. Todas ficam na branch `seven-os` e só entram na main no merge final, com tudo testado; até lá o que a Karen usa não muda (rotas novas em `/os`, schema `os`). A ordem abaixo é a ordem de construção.
 
 | Spec | Entrega | Etapa da proposta | Depende de |
 |---|---|---|---|
@@ -42,13 +42,16 @@ Objetivo, dentro e fora, como funciona, dados, API, telas, permissões, regras, 
 - `public.eventos_coletados` com upsert em (conta, numero_evento, titulo). O OS só lê.
 - Login atual e a tela `/`.
 
-## Portão de cada merge na main
+## Portão do merge final na main
 
 - Planilha de uma data real idêntica à de produção.
 - Contrato acima conferido.
 - Migrations aplicadas antes em `os_homolog`, com dump feito.
 - Publicação fora do horário da Karen e com `/status` sem execução em andamento.
 - Volta escrita antes do merge.
+- Testes completos no link de teste (preview do front e backend de homologação) com dados reais, com a Karen validando.
+- Ordem do corte: dump, migrations pendentes, merge do backend, merge do front, teste rápido e, se preciso, volta por revert.
+- Enquanto a branch viver, trazer a main para dentro dela toda semana, para não acumular conflito no merge final.
 
 ## Decisões de 05/11 que as specs já seguem
 

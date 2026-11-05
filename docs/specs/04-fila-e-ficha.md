@@ -11,7 +11,7 @@ Dar à equipe uma tela inicial com todos os itens em aberto, ordenados pelo que 
 
 ## Entrega em duas partes
 
-1. Somente leitura (após a Etapa 1): abas, lista, ficha com identificação e histórico. A Karen valida a identificação com casos reais.
+1. Somente leitura, no link de teste, após a Etapa 1: abas, lista, ficha com identificação e histórico. A Karen valida a identificação com casos reais.
 2. Completa (Etapa 4): filtros, ordenações, cartões do topo, exportação por perfil, indicação de quem está cotando.
 
 ## Como funciona
