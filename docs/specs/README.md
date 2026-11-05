@@ -62,4 +62,5 @@ Objetivo, dentro e fora, como funciona, dados, API, telas, permissões, regras, 
 - Declinar é descarte interno, guardado com motivo e recorrência.
 - Horários e rodadas do robô configuráveis pelo Administrador.
 - WhatsApp, ligar e registrar retorno: depois da Etapa 5.
+- Fechamento de segurança (trancar `eventos_coletados`, restringir o bucket, apagar `user_settings`) fica por último. `credenciais_coupa` fica e pode ser alterada.
 - Login pelo Supabase Auth. Senhas dos portais cifradas no Supabase; `.env` como plano B temporário só para as duas contas atuais.

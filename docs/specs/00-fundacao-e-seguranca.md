@@ -22,12 +22,12 @@ Preparar o terreno para construir o OS no mesmo Supabase da produção sem risco
 9. Desligar o cadastro aberto: tirar "Criar Conta Nova" e criar perfil inativo por padrão.
 10. Repositório do backend privado.
 11. Corrigir os avisos do Supabase: `eh_admin()` executável por anônimo e proteção contra senha vazada desligada.
-12. Apagar a tabela antiga `user_settings` (senha do Coupa em texto puro) depois que o gerenciador de credenciais estiver em uso, e trocar as senhas do Coupa.
+12. Manter `credenciais_coupa` (criada em 04/11, vazia) como a tabela de senhas do OS. Ela pode ser alterada para receber o portal e o que mais for preciso. A tabela antiga `user_settings` (2 linhas com e-mail e senha do Coupa em texto puro, que o código atual não usa) fica para o fechamento de segurança (Spec 09).
 
 ## Fora
 
 - Restringir alteração e exclusão no bucket `planilhas`. Decisão de 05/11: fica para depois. Fica registrado como risco aberto.
-- Fechar a inserção no bucket: só depois que o robô enviar com a chave de servidor.
+- Trancar leitura e inserção públicas em `eventos_coletados` e fechar a inserção no bucket: ficam para o fim (Spec 09). O código já grava com a chave de servidor quando ela está configurada na VPS (não verificado lá).
 - Remover o plano B do `.env` (Spec 01).
 
 ## Como funciona
