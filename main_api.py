@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from coupa_descricao import coletar_descricoes
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -594,75 +595,7 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
                             continue
                     return ""
 
-                # Campos de descrição do Coupa, na ordem em que devem aparecer na planilha
-                CAMPOS_DESCRICAO = [
-                    "Texto do item",
-                    "Texto de compra do material",
-                    "Texto Breve",
-                    "Descrição",
-                ]
-
-                def _limpar_multilingue(txt):
-                    """Extrai apenas o bloco PT quando o Coupa concatena PT/EN/ES."""
-                    m = re.search(r'PT\s*\|\|\s*(.*?)\*{3,}', txt, re.DOTALL)
-                    return m.group(1).strip() if m else txt.strip()
-
-                def _span_preenchido(dd_el):
-                    """Campo vazio no Coupa = <span class="none">. Não confiar no texto."""
-                    try:
-                        span = dd_el.find_element(By.TAG_NAME, "span")
-                        classes = (span.get_attribute("class") or "").split()
-                        if "none" in classes or "placeholderText" in classes:
-                            return ""
-                        return (span.text or "").strip()
-                    except Exception:
-                        return (dd_el.text or "").strip()
-
-                def coletar_descricoes(escopo):
-                    """
-                    Varre o <dl class="customFieldsReview"> da linha expandida e retorna
-                    (texto_concatenado, lista_de_campos_encontrados).
-                    """
-                    encontrados = {}
-
-                    # 1) Campos customizados (dt/dd)
-                    try:
-                        dts = escopo.find_elements(By.CSS_SELECTOR, "dl.customFieldsReview dt")
-                        for dt in dts:
-                            rotulo = (dt.text or "").strip()
-                            if not rotulo:
-                                continue
-                            try:
-                                dd = dt.find_element(By.XPATH, "following-sibling::dd[1]")
-                            except Exception:
-                                continue
-                            conteudo = _span_preenchido(dd)
-                            if conteudo:
-                                encontrados[rotulo] = _limpar_multilingue(conteudo)
-                    except Exception:
-                        pass
-
-                    # 2) Campo padrão "Descrição"
-                    try:
-                        el = escopo.find_element(By.CSS_SELECTOR, ".s-extended_description p.s-textField")
-                        conteudo = (el.text or "").strip()
-                        if conteudo and conteudo.lower() != "nenhum":
-                            encontrados["Descrição"] = _limpar_multilingue(conteudo)
-                    except Exception:
-                        pass
-
-                    # 3) Monta na ordem definida; campos desconhecidos vão ao final
-                    partes, ordem_log = [], []
-                    for nome in CAMPOS_DESCRICAO:
-                        if nome in encontrados:
-                            partes.append(encontrados[nome])
-                            ordem_log.append(nome)
-                    for nome, val in encontrados.items():
-                        if nome not in CAMPOS_DESCRICAO:
-                            partes.append(val)
-                            ordem_log.append(nome)
-
-                    return " | ".join(partes), ordem_log
+                # coletar_descricoes vem de coupa_descricao.py (compartilhado com sevenmaisdeum.py)
 
                 # --- QUANTIDADE ---
                 qtde = buscar_texto([".s-quantity .s-value"])
@@ -679,7 +612,7 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
                     log(f"  Item {idx + 1}/{total}: descricao de {campos_usados}")
                 else:
                     linha_atual[4].value = 'N/A'
-                    log(f"  AVISO: nenhum campo de descricao preenchido no evento {evento} item {idx+1}")
+                    log(f"  AVISO: nenhum campo de descricao encontrado no evento {evento} item {idx+1}")
 
                 # --- TÍTULO (aceita separador "||" ou "|") ---
                 titulo_raw = buscar_texto([".s-description p.s-textField"])
