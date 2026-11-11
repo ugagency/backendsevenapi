@@ -10,6 +10,7 @@ import sys
 def executar_funcao():
     from selenium import webdriver
     from selenium.webdriver.common.by import By
+    from coupa_descricao import coletar_descricoes
     from selenium.webdriver.common.keys import Keys
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
@@ -440,18 +441,14 @@ def executar_funcao():
             unid = buscar_texto([".s-quantity .s-unit"])
             linha_atual[6].value = unid if unid else 'N/A'
 
-            # --- DESCRIÇÃO (cascata: campo padrão -> custom field do Lance spot) ---
-            descri = buscar_texto([
-                ".s-extended_description p.s-textField",
-                ".s-request_line_custom_fields dd.itemReview span",
-                ".s-request_line_custom_fields dd span",
-            ])
+            # --- DESCRIÇÃO (concatena todos os campos preenchidos; ver coupa_descricao.py) ---
+            descri, campos_usados = coletar_descricoes(linha_dom)
             if descri:
-                desejado = re.search(r'PT\s*\|\|\s*(.*?)\*{3,}', descri, re.DOTALL)
-                linha_atual[4].value = desejado.group(1).strip() if desejado else descri
+                linha_atual[4].value = descri
+                print(f"  Item {idx + 1}/{total}: descricao de {campos_usados}")
             else:
                 linha_atual[4].value = 'N/A'
-                print(f"  AVISO: descricao nao encontrada no evento {evento} item {idx+1}")
+                print(f"  AVISO: nenhum campo de descricao encontrado no evento {evento} item {idx+1}")
 
             # --- TÍTULO (aceita separador "||" ou "|") ---
             titulo_raw = buscar_texto([".s-description p.s-textField"])
