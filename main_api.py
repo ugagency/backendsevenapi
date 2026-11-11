@@ -319,6 +319,7 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
         # Coleta de dados - Parte 1: Listagem de Eventos
         log(f"--- FASE 1: Coletando lista de eventos para {HOJE_str} ---")
         encontrou_ontem = False
+        paginas_antigas = 0
         pagina = 1
         total_coletados = 0
         motivos_total = Counter()
@@ -354,12 +355,25 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
                 # Usar index para evitar stale element reference
                 num_linhas = len(tbody.find_elements(By.TAG_NAME, "tr"))
                 log(f"Pagina {pagina}: {num_linhas} linhas encontradas na tabela.")
+                try:
+                    ind = driver.find_elements(By.CSS_SELECTOR, "div.paginator input#page")
+                    log(f"Pagina {pagina}: pagina atual segundo o Coupa = {[e.get_attribute('value') for e in ind][:2]}")
+                except Exception:
+                    pass
 
                 resumo = varrer_pagina(driver, HOJE, parse_date_str, num_linhas, coletar_evento, log)
                 motivos_total.update(resumo["motivos"])
                 log(resumo_texto(pagina, num_linhas, resumo))
                 if resumo["encontrou_anterior"]:
                     encontrou_ontem = True
+                if resumo["pagina_antiga"]:
+                    paginas_antigas += 1
+                    log(f"Pagina {pagina}: so ha eventos com data anterior a {HOJE_str} ({paginas_antigas} seguida(s)).")
+                    if paginas_antigas >= 2:
+                        log("Duas paginas seguidas so com eventos antigos, encerrando coleta.")
+                        encontrou_ontem = True
+                else:
+                    paginas_antigas = 0
             except Exception as e:
                 log(f"ERRO ao acessar tabela na pagina {pagina}: {e}")
                 break
@@ -367,6 +381,10 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
             if encontrou_ontem: break
             try:
                 proximo = driver.find_element(By.CLASS_NAME, "next_page")
+                try:
+                    log(f"Avancando: next_page href={proximo.get_attribute('href')} rel={proximo.get_attribute('rel')}")
+                except Exception:
+                    pass
                 driver.execute_script("arguments[0].click();", proximo)
                 pagina += 1
                 time.sleep(3)

@@ -86,6 +86,8 @@ def varrer_pagina(driver, hoje, parse_date_str, num_linhas, ao_coletar, log,
     status = Counter()
     coletados = 0
     encontrou_anterior = False
+    anteriores = 0   # linhas com data de inicio anterior a pedida, qualquer que seja o status
+    recentes = 0     # linhas com data de inicio igual ou posterior a pedida, qualquer status
     primeira = ultima = None
 
     for i in range(num_linhas):
@@ -117,6 +119,12 @@ def varrer_pagina(driver, hoje, parse_date_str, num_linhas, ao_coletar, log,
         if res.get("data_inicio_str") is not None:
             datas[res["data_inicio_str"] or "(vazia)"] += 1
             status[res["status"] or "(vazio)"] += 1
+            d = parse_date_str(res["data_inicio_str"])
+            if d is not None:
+                if d < hoje:
+                    anteriores += 1
+                else:
+                    recentes += 1
 
         estado = res["estado"]
         if estado == "fim":
@@ -136,9 +144,15 @@ def varrer_pagina(driver, hoje, parse_date_str, num_linhas, ao_coletar, log,
         else:
             coletados += 1
 
+    # Pagina so de eventos antigos (ex.: Concluidos de 2025): nada mais a coletar adiante.
+    # O criterio por linha nao enxerga isso porque "Concluido" e descartado antes da data.
+    pagina_antiga = (not encontrou_anterior and coletados == 0
+                     and anteriores > 0 and recentes == 0)
+
     return {
         "coletados": coletados,
         "encontrou_anterior": encontrou_anterior,
+        "pagina_antiga": pagina_antiga,
         "motivos": motivos,
         "datas": datas,
         "status": status,
