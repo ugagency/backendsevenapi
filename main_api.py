@@ -307,12 +307,43 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
 
         # Filtro de data (mesma lógica)
         try:
+            def _assinatura_tabela():
+                """Primeira linha de dados da tabela: muda quando o Coupa recarrega a lista."""
+                try:
+                    tb = driver.find_element(By.XPATH, '//*[@id="quote_request_table_tag"]')
+                    trs = tb.find_elements(By.TAG_NAME, "tr")
+                    for tr in trs[:5]:
+                        tds = tr.find_elements(By.TAG_NAME, "td")
+                        if len(tds) >= 7:
+                            return (tds[0].text.strip(), tds[2].text.strip())
+                except Exception:
+                    return None
+                return None
+
+            def _esperar_tabela_mudar(anterior, limite=45):
+                fim = time.time() + limite
+                while time.time() < fim:
+                    atual = _assinatura_tabela()
+                    if atual is not None and atual != anterior:
+                        time.sleep(3)
+                        return atual
+                    time.sleep(1)
+                return None
+
+            inicial = _assinatura_tabela()
             time_filter = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="ch_start_time"]')))
             time_filter.click()
-            time.sleep(5)
+            apos1 = _esperar_tabela_mudar(inicial)
+            if apos1 is None:
+                log("AVISO: a lista nao mudou apos o 1o clique na ordenacao (Coupa lento?); seguindo com espera fixa.")
+                time.sleep(5)
             time_filter = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="ch_start_time"]')))
             time_filter.click()
-            log("Filtro de data aplicado.")
+            apos2 = _esperar_tabela_mudar(apos1 if apos1 is not None else inicial)
+            if apos2 is None:
+                log("AVISO: a lista nao mudou apos o 2o clique na ordenacao (Coupa lento?); seguindo com espera fixa.")
+                time.sleep(5)
+            log(f"Filtro de data aplicado. Primeira linha (evento, data): antes={inicial} apos1={apos1} final={apos2 if apos2 is not None else _assinatura_tabela()}")
         except:
             log("AVISO: Filtro de data não encontrado, continuando sem ele.")
 
@@ -355,11 +386,6 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
                 # Usar index para evitar stale element reference
                 num_linhas = len(tbody.find_elements(By.TAG_NAME, "tr"))
                 log(f"Pagina {pagina}: {num_linhas} linhas encontradas na tabela.")
-                try:
-                    ind = driver.find_elements(By.CSS_SELECTOR, "div.paginator input#page")
-                    log(f"Pagina {pagina}: pagina atual segundo o Coupa = {[e.get_attribute('value') for e in ind][:2]}")
-                except Exception:
-                    pass
 
                 resumo = varrer_pagina(driver, HOJE, parse_date_str, num_linhas, coletar_evento, log)
                 motivos_total.update(resumo["motivos"])
@@ -381,13 +407,13 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
             if encontrou_ontem: break
             try:
                 proximo = driver.find_element(By.CLASS_NAME, "next_page")
-                try:
-                    log(f"Avancando: next_page href={proximo.get_attribute('href')} rel={proximo.get_attribute('rel')}")
-                except Exception:
-                    pass
+                sig_antes = _assinatura_tabela()
                 driver.execute_script("arguments[0].click();", proximo)
                 pagina += 1
-                time.sleep(3)
+                sig_depois = _esperar_tabela_mudar(sig_antes, limite=90)
+                if sig_depois is None:
+                    log(f"AVISO: a lista nao mudou apos clicar em Avancar (ficou em {sig_antes}); encerrando para nao reler a mesma pagina.")
+                    break
             except:
                 log(f"Sem proxima pagina. Total de paginas percorridas: {pagina}.")
                 break
