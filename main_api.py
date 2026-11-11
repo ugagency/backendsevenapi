@@ -1,5 +1,6 @@
 import os
 import re
+from collections import Counter
 import sys
 import json
 import time
@@ -12,6 +13,7 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from coupa_lista import varrer_pagina, resumo_texto
 from coupa_descricao import coletar_descricoes
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
@@ -319,6 +321,31 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
         encontrou_ontem = False
         pagina = 1
         total_coletados = 0
+        motivos_total = Counter()
+
+        def coletar_evento(numero_evento, data_final):
+            """Chamada para cada evento da data pedida. Devolve um motivo se NAO deve coletar."""
+            nonlocal total_coletados
+            # Verifica se o evento já existe no banco de dados
+            if not pular_verificacao_duplicados and not simular:
+                try:
+                    res_db = (
+                        supabase.table("eventos_coletados")
+                        .select("id")
+                        .eq("conta", conta_id)
+                        .eq("numero_evento", numero_evento)
+                        .execute()
+                    )
+                    if res_db.data:
+                        log(f"AVISO: Evento {numero_evento} ja existe no banco. Pulando.")
+                        return "ja_no_banco"
+                except Exception as e_db:
+                    log(f"ERRO ao verificar evento {numero_evento} no banco: {e_db}")
+            total_coletados += 1
+            log(f"  [{total_coletados}] Evento coletado: {numero_evento} | prazo: {data_final}")
+            ws.append([numero_evento, '', '', data_final, '', '', '', '', ''])
+            return None
+
         while True:
             log(f"Pagina {pagina}: aguardando tabela de eventos...")
             time.sleep(5)
@@ -328,59 +355,11 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
                 num_linhas = len(tbody.find_elements(By.TAG_NAME, "tr"))
                 log(f"Pagina {pagina}: {num_linhas} linhas encontradas na tabela.")
 
-                for i in range(num_linhas):
-                    try:
-                        # Re-fetch as linhas a cada iteração para evitar stale
-                        tbody = driver.find_element(By.XPATH, '//*[@id="quote_request_table_tag"]')
-                        linhas = tbody.find_elements(By.TAG_NAME, "tr")
-                        if i >= len(linhas): break
-                        linha = linhas[i]
-
-                        colunas = linha.find_elements(By.TAG_NAME, "td")
-                        if not colunas or len(colunas) < 7: continue
-
-                        yellow_flags = linha.find_elements(By.CSS_SELECTOR, "img[src*='flag_yellow']")
-                        if yellow_flags: continue
-
-                        status_text = colunas[4].text.strip()
-                        if "Concluído" in status_text: continue
-
-                        data_inicio_str = colunas[2].text.strip()
-                        data_inicio = parse_date_str(data_inicio_str)
-                        if data_inicio is None: continue
-
-                        if data_inicio < HOJE:
-                            encontrou_ontem = True
-                            log(f"Data anterior encontrada ({data_inicio}), encerrando coleta.")
-                            break
-
-                        if data_inicio != HOJE: continue
-
-                        numero_evento = colunas[0].find_element(By.TAG_NAME, "a").text.strip()
-
-                        # Verifica se o evento já existe no banco de dados
-                        if not pular_verificacao_duplicados and not simular:
-                            try:
-                                res_db = (
-                                    supabase.table("eventos_coletados")
-                                    .select("id")
-                                    .eq("conta", conta_id)
-                                    .eq("numero_evento", numero_evento)
-                                    .execute()
-                                )
-                                if res_db.data:
-                                    log(f"AVISO: Evento {numero_evento} ja existe no banco. Pulando.")
-                                    continue
-                            except Exception as e_db:
-                                log(f"ERRO ao verificar evento {numero_evento} no banco: {e_db}")
-
-                        data_final = colunas[3].text.strip()
-                        total_coletados += 1
-                        log(f"  [{total_coletados}] Evento coletado: {numero_evento} | prazo: {data_final}")
-                        ws.append([numero_evento, '', '', data_final, '', '', '', '', ''])
-                    except Exception as e:
-                        log(f"ERRO na linha {i} da pagina {pagina}: {e}")
-                        continue
+                resumo = varrer_pagina(driver, HOJE, parse_date_str, num_linhas, coletar_evento, log)
+                motivos_total.update(resumo["motivos"])
+                log(resumo_texto(pagina, num_linhas, resumo))
+                if resumo["encontrou_anterior"]:
+                    encontrou_ontem = True
             except Exception as e:
                 log(f"ERRO ao acessar tabela na pagina {pagina}: {e}")
                 break
@@ -395,6 +374,7 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
                 log(f"Sem proxima pagina. Total de paginas percorridas: {pagina}.")
                 break
 
+        log(f"Fase 1: linhas puladas no total: {dict(motivos_total)}")
         wb.save(EXCEL_PATH)
         log(f"Fase 1 concluida: {total_coletados} evento(s) coletado(s). Iniciando detalhamento...")
 
