@@ -43,8 +43,7 @@ def ler_linha_evento(driver, i, hoje, parse_date_str, com_info=False):
     status_text = colunas[4].text.strip()
     data_inicio_str = colunas[2].text.strip()
     res = {"data_inicio_str": data_inicio_str, "status": status_text}
-    if com_info:
-        res["info"] = (colunas[0].text.strip(), data_inicio_str, status_text)
+    res["info"] = (colunas[0].text.strip(), data_inicio_str, status_text)
 
     if linha.find_elements(By.CSS_SELECTOR, "img[src*='flag_yellow']"):
         res.update(estado="pular", motivo="bandeira_amarela")
@@ -112,10 +111,9 @@ def varrer_pagina(driver, hoje, parse_date_str, num_linhas, ao_coletar, log,
             continue
 
         if res.get("info"):
-            if i == 0:
+            if primeira is None:
                 primeira = res["info"]
-            else:
-                ultima = res["info"]
+            ultima = res["info"]
         if res.get("data_inicio_str") is not None:
             datas[res["data_inicio_str"] or "(vazia)"] += 1
             status[res["status"] or "(vazio)"] += 1
