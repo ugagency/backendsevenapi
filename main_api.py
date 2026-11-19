@@ -218,7 +218,7 @@ def obter_marcas_em_lote(descricoes: list, tamanho_lote: int = 60) -> list:
 
     return resultado
 
-def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pular_verificacao_duplicados: bool = False, coletor=None, simular: bool = False, dados_conta: dict = None) -> str:
+def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pular_verificacao_duplicados: bool = False, coletor=None, simular: bool = False, dados_conta: dict = None, retomar: str = None) -> str:
     """Lógica principal do robô Selenium refatorada para rodar sem interface (headless).
     Retorna "ok" ou uma descrição curta do erro.
 
@@ -226,7 +226,11 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
     finais (9 colunas) na lista, para a fila juntar várias contas numa planilha única.
 
     simular: loga no Coupa e coleta de verdade, mas NÃO consulta nem grava no banco e NÃO envia ao
-    Storage. A planilha fica na pasta SAIDA_TESTE do servidor."""
+    Storage. A planilha fica na pasta SAIDA_TESTE do servidor.
+
+    retomar: caminho de uma planilha parcial desta conta (a que fica preservada quando a rodada
+    cai na Fase 2). Pula a ordenacao e a Fase 1 e detalha so os eventos ainda sem titulo e sem
+    descricao. Falha na Fase 2 devolve "erro_fase2: ..." para a fila retomar sozinha."""
 
     conta = dados_conta or CONTAS_COUPA[conta_id]
     inicio_total = time.time()
@@ -234,6 +238,8 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
     log(f"Credenciais da conta {conta_id}: usuario do {conta.get('fonte_usuario') or 'env'}, senha do {conta.get('fonte_senha') or 'env'}")
     if simular:
         log("MODO SIMULACAO: nada sera gravado no banco nem enviado ao Storage; a planilha ficara em " + SAIDA_TESTE)
+    if retomar:
+        log(f"MODO RETOMADA: sem Fase 1; detalhando so os eventos pendentes de {retomar}")
     if pular_verificacao_duplicados:
         log("MODO TESTE: verificacao de eventos duplicados DESATIVADA - eventos ja existentes serao reprocessados")
 
@@ -279,6 +285,7 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
     driver = webdriver.Chrome(options=chrome_options)
     
     EXCEL_PATH = os.path.join(tempfile.gettempdir(), filename)
+    fase2_iniciada = False
     ESTADOS = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO']
 
     try:
@@ -293,7 +300,7 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
         driver.get("https://vale.coupahost.com/sessions/supplier_login")
 
         # Login
-        WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "user_login")))
+        WebDriverWait(driver, 120).until(EC.presence_of_element_located((By.ID, "user_login")))
         driver.find_element(By.ID, "user_login").send_keys(conta["user"])
         driver.find_element(By.ID, "user_password").send_keys(conta["senha"], Keys.RETURN)
         log(f"Login enviado (conta {conta_id}). Aguardando carregamento...")
@@ -301,126 +308,183 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
         # Se o formulário de login continuar na tela, a credencial foi recusada.
         # Sem essa checagem o robô seguia e subia uma planilha vazia como se tivesse dado certo.
         try:
-            WebDriverWait(driver, 30).until(EC.invisibility_of_element_located((By.ID, "user_login")))
+            # O Coupa chega a levar mais de 40 s para responder ao login; 30 s dava falso "login falhou".
+            WebDriverWait(driver, 120).until(EC.invisibility_of_element_located((By.ID, "user_login")))
         except Exception:
-            raise RuntimeError(f"Login no Coupa falhou para a conta {conta_id} (formulario de login ainda visivel)")
+            raise RuntimeError(f"Login no Coupa falhou para a conta {conta_id} (formulario de login ainda visivel apos 120 s: "
+                               "credencial recusada ou Coupa muito lento)")
 
-        # Filtro de data (mesma lógica)
-        try:
+        if not retomar:
+            # Ordenacao da lista por "Data inicial", mais nova primeiro.
+            # Medido em 11/11/2026 na filial1: cada recarga da lista (clique na ordenacao ou em Avancar)
+            # levou 33 a 39 s. Antes o robo esperava 5 s entre os dois cliques e 3 s apos Avancar, lia a
+            # tabela no meio da troca e ficava com a ordem crescente (eventos de 2025 primeiro), perdendo
+            # centenas de eventos do dia. Agora cada clique espera a lista realmente mudar.
+            ESPERA_LISTA = 150  # segundos
+
             def _assinatura_tabela():
-                """Primeira linha de dados da tabela: muda quando o Coupa recarrega a lista."""
+                """Primeira e ultima linha de dados e total de linhas: muda quando o Coupa recarrega a lista."""
                 try:
                     tb = driver.find_element(By.XPATH, '//*[@id="quote_request_table_tag"]')
-                    trs = tb.find_elements(By.TAG_NAME, "tr")
-                    for tr in trs[:5]:
+                    dados = []
+                    for tr in tb.find_elements(By.TAG_NAME, "tr"):
                         tds = tr.find_elements(By.TAG_NAME, "td")
                         if len(tds) >= 7:
-                            return (tds[0].text.strip(), tds[2].text.strip())
+                            dados.append((tds[0].text.strip(), tds[2].text.strip()))
+                    if not dados:
+                        return None
+                    return (dados[0], dados[-1], len(dados))
                 except Exception:
                     return None
-                return None
 
-            def _esperar_tabela_mudar(anterior, limite=45):
+            def _esperar_tabela_mudar(anterior, limite=ESPERA_LISTA):
+                """Espera a lista mudar e ficar estavel por 4 s. Devolve a nova assinatura ou None."""
                 fim = time.time() + limite
                 while time.time() < fim:
                     atual = _assinatura_tabela()
                     if atual is not None and atual != anterior:
-                        time.sleep(3)
-                        return atual
+                        time.sleep(4)
+                        if _assinatura_tabela() == atual:
+                            return atual
                     time.sleep(1)
                 return None
 
-            inicial = _assinatura_tabela()
-            time_filter = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="ch_start_time"]')))
-            time_filter.click()
-            apos1 = _esperar_tabela_mudar(inicial)
-            if apos1 is None:
-                log("AVISO: a lista nao mudou apos o 1o clique na ordenacao (Coupa lento?); seguindo com espera fixa.")
-                time.sleep(5)
-            time_filter = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="ch_start_time"]')))
-            time_filter.click()
-            apos2 = _esperar_tabela_mudar(apos1 if apos1 is not None else inicial)
-            if apos2 is None:
-                log("AVISO: a lista nao mudou apos o 2o clique na ordenacao (Coupa lento?); seguindo com espera fixa.")
-                time.sleep(5)
-            log(f"Filtro de data aplicado. Primeira linha (evento, data): antes={inicial} apos1={apos1} final={apos2 if apos2 is not None else _assinatura_tabela()}")
-        except:
-            log("AVISO: Filtro de data não encontrado, continuando sem ele.")
-
-        # Coleta de dados - Parte 1: Listagem de Eventos
-        log(f"--- FASE 1: Coletando lista de eventos para {HOJE_str} ---")
-        encontrou_ontem = False
-        paginas_antigas = 0
-        pagina = 1
-        total_coletados = 0
-        motivos_total = Counter()
-
-        def coletar_evento(numero_evento, data_final):
-            """Chamada para cada evento da data pedida. Devolve um motivo se NAO deve coletar."""
-            nonlocal total_coletados
-            # Verifica se o evento já existe no banco de dados
-            if not pular_verificacao_duplicados and not simular:
+            def _ordem_decrescente(assinatura):
                 try:
-                    res_db = (
-                        supabase.table("eventos_coletados")
-                        .select("id")
-                        .eq("conta", conta_id)
-                        .eq("numero_evento", numero_evento)
-                        .execute()
-                    )
-                    if res_db.data:
-                        log(f"AVISO: Evento {numero_evento} ja existe no banco. Pulando.")
-                        return "ja_no_banco"
-                except Exception as e_db:
-                    log(f"ERRO ao verificar evento {numero_evento} no banco: {e_db}")
-            total_coletados += 1
-            log(f"  [{total_coletados}] Evento coletado: {numero_evento} | prazo: {data_final}")
-            ws.append([numero_evento, '', '', data_final, '', '', '', '', ''])
-            return None
+                    th = driver.find_element(By.ID, "th_start_time")
+                    if (th.get_attribute("aria-sort") or "").lower() in ("decrescente", "descending"):
+                        return True
+                except Exception:
+                    pass
+                if assinatura:
+                    d = parse_date_str(assinatura[0][1])
+                    return d is not None and d >= HOJE
+                return False
 
-        while True:
-            log(f"Pagina {pagina}: aguardando tabela de eventos...")
-            time.sleep(5)
-            try:
-                tbody = wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="quote_request_table_tag"]')))
-                # Usar index para evitar stale element reference
-                num_linhas = len(tbody.find_elements(By.TAG_NAME, "tr"))
-                log(f"Pagina {pagina}: {num_linhas} linhas encontradas na tabela.")
-
-                resumo = varrer_pagina(driver, HOJE, parse_date_str, num_linhas, coletar_evento, log)
-                motivos_total.update(resumo["motivos"])
-                log(resumo_texto(pagina, num_linhas, resumo))
-                if resumo["encontrou_anterior"]:
-                    encontrou_ontem = True
-                if resumo["pagina_antiga"]:
-                    paginas_antigas += 1
-                    log(f"Pagina {pagina}: so ha eventos com data anterior a {HOJE_str} ({paginas_antigas} seguida(s)).")
-                    if paginas_antigas >= 2:
-                        log("Duas paginas seguidas so com eventos antigos, encerrando coleta.")
-                        encontrou_ontem = True
-                else:
-                    paginas_antigas = 0
-            except Exception as e:
-                log(f"ERRO ao acessar tabela na pagina {pagina}: {e}")
-                break
-
-            if encontrou_ontem: break
-            try:
-                proximo = driver.find_element(By.CLASS_NAME, "next_page")
-                sig_antes = _assinatura_tabela()
-                driver.execute_script("arguments[0].click();", proximo)
-                pagina += 1
-                sig_depois = _esperar_tabela_mudar(sig_antes, limite=90)
-                if sig_depois is None:
-                    log(f"AVISO: a lista nao mudou apos clicar em Avancar (ficou em {sig_antes}); encerrando para nao reler a mesma pagina.")
+            # Primeiro espera a lista inicial aparecer; sem isso o 1o "mudou" seria so a lista terminando de carregar.
+            atual = None
+            fim_inicial = time.time() + ESPERA_LISTA
+            while atual is None and time.time() < fim_inicial:
+                atual = _assinatura_tabela()
+                if atual is None:
+                    time.sleep(1)
+            if atual is None:
+                raise RuntimeError(f"A lista de eventos do Coupa nao carregou em {ESPERA_LISTA} s apos o login.")
+            time.sleep(4)
+            atual = _assinatura_tabela() or atual
+            ordenado = False
+            for clique in range(1, 5):
+                time_filter = WebDriverWait(driver, ESPERA_LISTA).until(EC.element_to_be_clickable((By.ID, "ch_start_time")))
+                t0 = time.time()
+                time_filter.click()
+                nova = _esperar_tabela_mudar(atual)
+                if nova is None:
+                    log(f"AVISO: a lista nao mudou {ESPERA_LISTA} s apos o clique {clique} na ordenacao.")
+                    continue
+                atual = nova
+                log(f"Ordenacao: clique {clique} recarregou a lista em {int(time.time() - t0)} s; primeira linha {atual[0]}")
+                if _ordem_decrescente(atual):
+                    ordenado = True
                     break
-            except:
-                log(f"Sem proxima pagina. Total de paginas percorridas: {pagina}.")
-                break
+            if not ordenado:
+                raise RuntimeError("Nao foi possivel ordenar a lista por Data inicial (mais nova primeiro); "
+                                   "coleta interrompida para nao salvar uma lista incompleta.")
+            log("Filtro de data aplicado (mais nova primeiro).")
 
-        log(f"Fase 1: linhas puladas no total: {dict(motivos_total)}")
-        wb.save(EXCEL_PATH)
-        log(f"Fase 1 concluida: {total_coletados} evento(s) coletado(s). Iniciando detalhamento...")
+            # Coleta de dados - Parte 1: Listagem de Eventos
+            log(f"--- FASE 1: Coletando lista de eventos para {HOJE_str} ---")
+            encontrou_ontem = False
+            paginas_antigas = 0
+            pagina = 1
+            total_coletados = 0
+            motivos_total = Counter()
+            vistos_na_lista = set()
+
+            def coletar_evento(numero_evento, data_final):
+                """Chamada para cada evento da data pedida. Devolve um motivo se NAO deve coletar."""
+                nonlocal total_coletados
+                if numero_evento in vistos_na_lista:
+                    return "repetido_na_lista"
+                vistos_na_lista.add(numero_evento)
+                # Verifica se o evento já existe no banco de dados
+                if not pular_verificacao_duplicados and not simular:
+                    try:
+                        res_db = (
+                            supabase.table("eventos_coletados")
+                            .select("id")
+                            .eq("conta", conta_id)
+                            .eq("numero_evento", numero_evento)
+                            .execute()
+                        )
+                        if res_db.data:
+                            log(f"AVISO: Evento {numero_evento} ja existe no banco. Pulando.")
+                            return "ja_no_banco"
+                    except Exception as e_db:
+                        log(f"ERRO ao verificar evento {numero_evento} no banco: {e_db}")
+                total_coletados += 1
+                log(f"  [{total_coletados}] Evento coletado: {numero_evento} | prazo: {data_final}")
+                ws.append([numero_evento, '', '', data_final, '', '', '', '', ''])
+                return None
+
+            while True:
+                log(f"Pagina {pagina}: aguardando tabela de eventos...")
+                time.sleep(5)
+                try:
+                    tbody = wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="quote_request_table_tag"]')))
+                    # Usar index para evitar stale element reference
+                    num_linhas = len(tbody.find_elements(By.TAG_NAME, "tr"))
+                    log(f"Pagina {pagina}: {num_linhas} linhas encontradas na tabela.")
+
+                    resumo = varrer_pagina(driver, HOJE, parse_date_str, num_linhas, coletar_evento, log)
+                    motivos_total.update(resumo["motivos"])
+                    log(resumo_texto(pagina, num_linhas, resumo))
+                    if resumo["encontrou_anterior"]:
+                        encontrou_ontem = True
+                    if resumo["pagina_antiga"]:
+                        paginas_antigas += 1
+                        log(f"Pagina {pagina}: so ha eventos com data anterior a {HOJE_str} ({paginas_antigas} seguida(s)).")
+                        if paginas_antigas >= 2:
+                            log("Duas paginas seguidas so com eventos antigos, encerrando coleta.")
+                            encontrou_ontem = True
+                    else:
+                        paginas_antigas = 0
+                except Exception as e:
+                    log(f"ERRO ao acessar tabela na pagina {pagina}: {e}")
+                    break
+
+                if encontrou_ontem: break
+                try:
+                    proximo = driver.find_element(By.CLASS_NAME, "next_page")
+                    if "disabled" in (proximo.get_attribute("class") or "") or not proximo.get_attribute("href"):
+                        log(f"Ultima pagina da lista. Total de paginas percorridas: {pagina}.")
+                        break
+                    sig_antes = _assinatura_tabela()
+                    t0 = time.time()
+                    driver.execute_script("arguments[0].click();", proximo)
+                    sig_depois = _esperar_tabela_mudar(sig_antes)
+                    if sig_depois is None:
+                        log("AVISO: a lista nao mudou apos clicar em Avancar; tentando de novo.")
+                        proximo = driver.find_element(By.CLASS_NAME, "next_page")
+                        driver.execute_script("arguments[0].click();", proximo)
+                        sig_depois = _esperar_tabela_mudar(sig_antes)
+                    if sig_depois is None:
+                        raise RuntimeError(f"Coupa nao carregou a pagina {pagina + 1} da lista; "
+                                           "coleta interrompida para nao salvar uma lista incompleta.")
+                    pagina += 1
+                    log(f"Pagina {pagina}: carregada em {int(time.time() - t0)} s.")
+                except RuntimeError:
+                    raise
+                except Exception:
+                    log(f"Sem proxima pagina. Total de paginas percorridas: {pagina}.")
+                    break
+
+            log(f"Fase 1: linhas puladas no total: {dict(motivos_total)}")
+            wb.save(EXCEL_PATH)
+            log(f"Fase 1 concluida: {total_coletados} evento(s) coletado(s). Iniciando detalhamento...")
+        else:
+            # Retomada: a lista da Fase 1 ja esta na planilha parcial.
+            if os.path.abspath(retomar) != os.path.abspath(EXCEL_PATH):
+                shutil.copy(retomar, EXCEL_PATH)
 
         # --- DETALHA CADA EVENTO ---
         wb = load_workbook(EXCEL_PATH)
@@ -428,17 +492,62 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
 
         todos_eventos = [row[0].value for row in ws.iter_rows(min_row=2) if row[0].value]
         total_eventos = len(todos_eventos)
+        feitos = set()
+        if retomar:
+            # Evento ja detalhado = alguma linha dele tem titulo ou descricao.
+            for r in ws.iter_rows(min_row=2):
+                if r[0].value and (r[1].value not in (None, "") or r[4].value not in (None, "")):
+                    feitos.add(r[0].value)
+            pendentes = len({e for e in todos_eventos if e not in feitos})
+            log(f"RETOMADA: {len(feitos)} evento(s) ja detalhados, {pendentes} pendente(s).")
         log(f"--- FASE 2: Detalhando {total_eventos} evento(s) ---")
+        fase2_iniciada = True
+        falhas_seguidas = 0
+
+        def _falha_evento(motivo):
+            """Evento sem itens. Tres seguidos (13/11: 18 seguidos, ~41 s cada, ate a janela cair) =
+            sessao do Coupa provavelmente perdida: para a conta e a fila retoma com login novo."""
+            nonlocal falhas_seguidas
+            falhas_seguidas += 1
+            try:
+                log(f"  DIAGNOSTICO {motivo}: url={driver.current_url} | titulo={driver.title!r}")
+            except Exception:
+                pass
+            if falhas_seguidas >= 3:
+                raise RuntimeError(f"{falhas_seguidas} eventos seguidos sem itens (provavel sessao perdida no Coupa)")
 
         for idx_ev, row in enumerate(ws.iter_rows(min_row=2), start=1):
             evento = row[0].value
-            if not evento:
+            if not evento or evento in feitos:
                 continue
 
             log(f"[{idx_ev}/{total_eventos}] Detalhando evento: {evento}")
 
-            driver.get(f"https://vale.coupahost.com/quotes/external_responses/{evento}/edit")
+            url_evento = f"https://vale.coupahost.com/quotes/external_responses/{evento}/edit"
+            driver.get(url_evento)
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+
+            # O Coupa responde 500 ("Coupa: Erro interno") de vez em quando. Em 13/11 a causa foi a sessao
+            # do navegador: um login novo resolveu os mesmos eventos. Por isso so recarrega uma vez (10 s)
+            # em vez de gastar ~41 s procurando seletores numa pagina de erro; 3 eventos seguidos com
+            # erro derrubam a tentativa e a fila retoma com navegador e login novos.
+            def _pagina_com_erro():
+                try:
+                    return "erro interno" in (driver.title or "").lower()
+                except Exception:
+                    return False
+
+            for espera in (10,):
+                if not _pagina_com_erro():
+                    break
+                log(f"  Coupa: Erro interno no evento {evento}; nova tentativa em {espera} s...")
+                time.sleep(espera)
+                driver.get(url_evento)
+                wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            if _pagina_com_erro():
+                log(f"  Coupa: Erro interno persistente no evento {evento}; evento fica pendente.")
+                _falha_evento("erro interno persistente")
+                continue
 
             # --- VERIFICA EXISTÊNCIA DA PÁGINA DE DESCRIÇÃO ---
             try:
@@ -469,12 +578,14 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
                     query_css = fallback_css
                 except:
                     log(f"⚠️ Nenhum seletor de expansão encontrado no evento {evento}")
+                    _falha_evento("sem seletor de expansao")
                     continue
 
             elementos = driver.find_elements(*seletor_atual)
 
             if not elementos:
                 log(f"⚠️ Nenhum elemento de expansão encontrado no evento {evento}")
+                _falha_evento("sem elemento de expansao")
                 continue
 
             # Duplicar a linha do evento pelo número de elementos encontrados
@@ -512,6 +623,7 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
             total = driver.execute_script(f"return document.querySelectorAll('{query_css}').length")
             if total == 0:
                 log(f"⚠️ Nenhum elemento de expansão encontrado no evento {evento}")
+                _falha_evento("sem elemento de expansao")
                 continue
 
             # duplicar linha já feito acima; garante linhas_evento atualizado
@@ -717,6 +829,7 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
                 idx += 1
 
             wb.save(EXCEL_PATH)
+            falhas_seguidas = 0
             log(f"[{idx_ev}/{total_eventos}] Evento {evento} finalizado.")
 
         log("--- FASE 3: Ordenando planilha e salvando no banco ---")
@@ -817,6 +930,8 @@ def executar_robo_selenium(data_usuario: str, filename: str, conta_id: str, pula
         except Exception as e_diag:
             log(f"DIAGNOSTICO indisponivel: {type(e_diag).__name__}")
         log(f"Arquivo Excel preservado para recuperacao manual em: {EXCEL_PATH}")
+        if fase2_iniciada and os.path.exists(EXCEL_PATH):
+            return f"erro_fase2: {e}"
         return f"erro: {e}"
     finally:
         driver.quit()
@@ -926,14 +1041,21 @@ def executar_fila(data: str, data_formatada: str, contas: list, pular_verificaca
         for conta_id in contas:
             ESTADO_ROBO.update({"conta": conta_id, "inicio": datetime.now().isoformat(timespec="seconds")})
             coletor = [] if unificar else None
-            try:
-                resultados[conta_id] = executar_robo_selenium(
-                    data, nome_arquivo(conta_id, data_formatada, conta_padrao), conta_id, pular_verificacao_duplicados, coletor, simular,
-                    retrato[conta_id]
-                )
-            except Exception as e:
-                log(f"ERRO FATAL ao iniciar robô da conta {conta_id}: {e}")
-                resultados[conta_id] = f"erro: {e}"
+            nome = nome_arquivo(conta_id, data_formatada, conta_padrao)
+            origem = None
+            for tentativa in range(3):
+                try:
+                    resultados[conta_id] = executar_robo_selenium(
+                        data, nome, conta_id, pular_verificacao_duplicados, coletor, simular,
+                        retrato[conta_id], origem
+                    )
+                except Exception as e:
+                    log(f"ERRO FATAL ao iniciar robô da conta {conta_id}: {e}")
+                    resultados[conta_id] = f"erro: {e}"
+                if not str(resultados[conta_id]).startswith("erro_fase2") or tentativa == 2:
+                    break
+                origem = os.path.join(tempfile.gettempdir(), nome)
+                log(f"RETOMADA AUTOMATICA da conta {conta_id} ({tentativa + 1}/2): novo navegador e novo login, a partir de {origem}")
             if unificar and resultados[conta_id] == "ok":
                 por_conta[conta_id] = coletor
 
@@ -942,7 +1064,7 @@ def executar_fila(data: str, data_formatada: str, contas: list, pular_verificaca
             caminho = os.path.join(tempfile.gettempdir(), nome)
             try:
                 total, unicas = montar_planilha_unificada(
-                    por_conta, {c: retrato[c]["nome"] for c in por_conta}, caminho
+                    por_conta, {c: retrato.get(c, {}).get("nome", c) for c in por_conta}, caminho
                 )
                 log(f"Planilha unificada: {total} linha(s) recebidas, {unicas} na planilha ({total - unicas} repetida(s) entre filiais).")
                 if simular:
