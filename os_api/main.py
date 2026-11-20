@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import VERSAO, db
-from .auth import Usuario, usuario_atual
+from .acesso import UsuarioOS, usuario_os
+from .auth import usuario_atual
 from .config import Config
 
 
@@ -38,8 +39,9 @@ def criar_app(cfg: Config = None, iniciar_banco: bool = True) -> FastAPI:
     protegido = APIRouter(prefix="/os", dependencies=[Depends(usuario_atual)])
 
     @protegido.get("/eu")
-    def eu(u: Usuario = Depends(usuario_atual)):
-        return {"id": u.id, "email": u.email}
+    def eu(u: UsuarioOS = Depends(usuario_os)):
+        return {"id": u.id, "email": u.email, "nome": u.nome, "perfil": u.perfil,
+                "permissoes": sorted(u.permissoes), "contas": list(u.contas)}
 
     app.include_router(publico)
     app.include_router(protegido)
