@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import VERSAO, db
 from .acesso import UsuarioOS, usuario_os
+from .admin import rotas_admin
 from .auth import usuario_atual
 from .config import Config
 
@@ -45,6 +46,7 @@ def criar_app(cfg: Config = None, iniciar_banco: bool = True) -> FastAPI:
 
     app.include_router(publico)
     app.include_router(protegido)
+    app.include_router(rotas_admin(), dependencies=[Depends(usuario_atual)])
     return app
 
 
