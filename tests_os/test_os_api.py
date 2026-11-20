@@ -54,7 +54,7 @@ def test_eu_devolve_perfil_permissoes_e_contas(monkeypatch):
     r = cliente().get("/os/eu", headers=entrar(monkeypatch, "cotacao", contas=(1, 2)))
     assert r.status_code == 200
     d = r.json()
-    assert d["perfil"] == "cotacao" and d["contas"] == [1, 2]
+    assert d["perfil"] == "cotacao" and [c["id"] for c in d["contas"]] == [1, 2]
     assert "margem.ver" not in d["permissoes"] and "preco_compra.ver" in d["permissoes"]
 
 

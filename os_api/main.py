@@ -6,6 +6,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import VERSAO, db
 from .acesso import UsuarioOS, usuario_os
 from .admin import rotas_admin
+from .assistente import rotas_assistente
+from .captura import rotas_captura
+from .cotacao import rotas_cotacao
+from .fila import rotas_fila
+from .fornecedores import rotas_fornecedores
+from .painel import rotas_painel
+from .produtos import rotas_produtos
+from .relatorios import rotas_relatorios
 from .auth import usuario_atual
 from .config import Config
 
@@ -25,7 +33,8 @@ def criar_app(cfg: Config = None, iniciar_banco: bool = True) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(cfg.cors_origens),  # lista vazia = nenhuma origem de navegador
-        allow_methods=["GET", "POST", "PATCH", "PUT"],
+        allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
+        expose_headers=["Content-Disposition"],
         allow_headers=["Authorization", "Content-Type"],
     )
 
@@ -42,11 +51,13 @@ def criar_app(cfg: Config = None, iniciar_banco: bool = True) -> FastAPI:
     @protegido.get("/eu")
     def eu(u: UsuarioOS = Depends(usuario_os)):
         return {"id": u.id, "email": u.email, "nome": u.nome, "perfil": u.perfil,
-                "permissoes": sorted(u.permissoes), "contas": list(u.contas)}
+                "permissoes": sorted(u.permissoes), "contas": list(u.contas_detalhe)}
 
     app.include_router(publico)
     app.include_router(protegido)
-    app.include_router(rotas_admin(), dependencies=[Depends(usuario_atual)])
+    for rotas in (rotas_admin, rotas_fila, rotas_produtos, rotas_fornecedores, rotas_cotacao, rotas_captura,
+                  rotas_painel, rotas_assistente, rotas_relatorios):
+        app.include_router(rotas(), dependencies=[Depends(usuario_atual)])
     return app
 
 
