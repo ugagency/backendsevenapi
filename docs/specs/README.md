@@ -55,7 +55,7 @@ Objetivo, dentro e fora, como funciona, dados, API, telas, permissões, regras, 
 
 ## Decisões de 05/11 que as specs já seguem
 
-- Preço de venda: a equipe digita; o sistema não calcula.
+- Preço de venda: a equipe digita (Cotação inclusive, decisão de 20/11); o sistema não calcula. Margem calculada só para Administrador e Supervisor.
 - Evento em dois CNPJs: uma linha na fila, com as filiais indicadas.
 - Perfis: Administrador, Supervisor e Cotação. Suporte SSYS com acesso próprio, sem preço, auditado.
 - Cotação vê preço de compra e não vê margem.

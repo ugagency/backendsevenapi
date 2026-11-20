@@ -57,7 +57,8 @@ Bloco "Nova cotação" na ficha, com os alertas à vista, e histórico de versõ
 ## Permissões
 
 - Ver e lançar: segue a matriz da Spec 01. Ver pendência 1.
-- Margem e preço de venda: Administrador e Supervisor.
+- Preço de venda: quem lança a cotação digita e vê (decisão de 20/11, Cotação inclusive).
+- Margem calculada e histórico de margem: Administrador e Supervisor.
 
 ## Regras
 
@@ -81,7 +82,7 @@ Bloco "Nova cotação" na ficha, com os alertas à vista, e histórico de versõ
 
 ## Pendências
 
-1. Quem digita margem e preço de venda, já que Cotação não vê margem (ver Spec 01).
+1. Decidido em 20/11: Cotação digita o preço de venda; a margem calculada só aparece para Administrador e Supervisor (ver Spec 01, pendência 1, sobre a dedução de cabeça).
 2. Limite de divergência: Wemerson.
 3. Verificar no Coupa se o preço enviado aparece em eventos encerrados.
 4. Resultado: na base, só 0,4% das linhas têm esse dado e o portal não informa quem venceu. A taxa de vitória depende da disciplina da equipe.

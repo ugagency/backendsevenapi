@@ -40,8 +40,9 @@ O perfil do serviço atual (`public.perfis`, `admin` ou `operador`) continua val
 | Rodar e baixar capturas | Sim | Sim | Sim | Sim |
 | Vincular fornecedor e resolver conferência | Sim | Sim | Sim | Não |
 | Ver preço de compra | Sim | Sim | Sim | Não |
-| Ver margem e preço de venda | Sim | Sim | Não | Não |
-| Lançar cotação | Sim | Sim | Sim (ver pendência 1) | Não |
+| Ver e digitar preço de venda | Sim | Sim | Sim | Não |
+| Ver margem calculada e histórico de margem | Sim | Sim | Não | Não |
+| Lançar cotação | Sim | Sim | Sim | Não |
 | Ver valor em aberto e indicadores de margem | Sim | Sim | Não | Não |
 | Exportar listas | Sim | Sim | Sem colunas restritas | Sem colunas restritas |
 | Gerir usuários, contas, credenciais e parâmetros | Sim | Não | Não | Sim, sem ver senha |
@@ -101,6 +102,6 @@ Permissões no código, como lista fixa: `fila.ver`, `captura.rodar`, `captura.b
 
 ## Pendências
 
-1. Quem digita preço de venda e margem. Cotação vê preço de compra e não vê margem. Se Cotação digitar o preço de venda vendo o de compra, ela calcula a margem de cabeça, e a restrição vira formalidade. Opções: (a) Cotação lança compra, IPI e frete, e Supervisor define venda; (b) Cotação digita venda sem ver histórico de margem, aceitando que ela deduz. Decidir com a Seven.
+1. Decidido em 20/11: Cotação digita o preço de venda. Consequência assumida: vendo compra e venda, ela consegue deduzir a margem de cabeça. A restrição vale para o que o sistema mostra: nenhuma tela, exportação, painel, alerta ou resposta do assistente exibe margem calculada ou histórico de margem para Cotação. Se a Seven quiser sigilo real da margem, a saída é Supervisor definir a venda; revisar com a Seven antes do corte.
 2. E-mails da Emanuele e do Fred e demais usuários: onboarding presencial.
 3. Lista de motivos de declínio e de categorias: Seven.
