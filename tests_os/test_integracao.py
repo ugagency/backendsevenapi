@@ -215,7 +215,7 @@ def test_09_painel_por_perfil(como):
     assert not (chaves("cotacao") & restritos) and not (chaves("suporte") & restritos)
     adm = {i["chave"]: i for i in como("admin").get("/os/painel").json()["indicadores"]}
     assert restritos <= set(adm)
-    assert adm["vitoria"]["disponivel"] is False and "minimo" in adm["vitoria"]["motivo"]
+    assert adm["vitoria"]["disponivel"] is False and "mínimo" in adm["vitoria"]["motivo"]
     assert adm["margem"]["valor"] is not None and adm["capturados"]["valor"] >= 5
     cart = como("cotacao").get("/os/fila/cartoes").json()
     assert "valor_estimado" not in cart and cart["em_aberto"] >= 3 and cart["aguardando_voce"] >= 1
