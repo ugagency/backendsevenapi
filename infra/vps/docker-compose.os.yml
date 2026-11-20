@@ -1,0 +1,22 @@
+# PROPOSTA para o corte (nao esta em uso). Adiciona o os_api ao compose atual sem mexer no robo.
+# O robo (seven-backend) fica igual; o os_api e outro container, em outra porta, so em 127.0.0.1.
+# Usa .env.os (separado do .env do robo). O .env.os NAO leva SUPABASE_SECRET_KEY: o os_api recusa subir com ela.
+services:
+  seven-backend:
+    build: .
+    container_name: seven-backend
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"
+    shm_size: "1gb"
+
+  os-api:
+    build:
+      context: .
+      dockerfile: os_api/Dockerfile
+    container_name: seven-os-api
+    restart: unless-stopped
+    env_file: .env.os
+    ports:
+      - "127.0.0.1:8100:8100"

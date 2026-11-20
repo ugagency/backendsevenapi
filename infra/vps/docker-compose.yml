@@ -1,0 +1,12 @@
+# Copia fiel do arquivo em uso na VPS (/opt/seven-backend/docker-compose.yml), versionada em 20/11/2026.
+# NAO fica na raiz do repositorio de proposito: la o arquivo da VPS e untracked, e um arquivo igual
+# na main faria o `git pull` do deploy.sh falhar. Ver infra/vps/README.md.
+services:
+  seven-backend:
+    build: .
+    container_name: seven-backend
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"
+    shm_size: "1gb"
