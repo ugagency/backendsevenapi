@@ -5,3 +5,4 @@ __pycache__/
 
 # saidas do modo simulacao
 saida_teste/
+.env.os
