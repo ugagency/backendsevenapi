@@ -13,6 +13,7 @@ class Config:
     cors_origens: tuple
     convite_url: str = ""  # Edge Function os-convidar no Supabase (unica que cria login)
     convite_redirect: str = ""  # pagina do front onde o convidado define a senha
+    cors_regex: str = ""  # opcional: previas da Vercel, cujo endereco muda a cada versao
 
     @staticmethod
     def do_ambiente() -> "Config":
@@ -31,4 +32,5 @@ class Config:
             cors_origens=origens,
             convite_url=os.getenv("OS_CONVITE_URL", f"{supabase_url}/functions/v1/os-convidar" if supabase_url else ""),
             convite_redirect=os.getenv("OS_CONVITE_REDIRECT", ""),
+            cors_regex=os.getenv("OS_CORS_REGEX", ""),
         )

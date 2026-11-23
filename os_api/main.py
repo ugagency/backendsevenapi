@@ -37,6 +37,7 @@ def criar_app(cfg: Config = None, iniciar_banco: bool = True) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(cfg.cors_origens),  # lista vazia = nenhuma origem de navegador
+        allow_origin_regex=cfg.cors_regex or None,
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
         expose_headers=["Content-Disposition"],
         allow_headers=["Authorization", "Content-Type"],
