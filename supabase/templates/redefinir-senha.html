@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light only">
+<title>Redefinir sua senha do Seven OS</title>
+<style>@media (max-width:480px){.px{padding-left:24px !important;padding-right:24px !important;}}</style>
+</head>
+<body style="margin:0;padding:0;background:#F3F5F7;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">Use o link para criar uma senha nova no Seven OS.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F3F5F7;">
+  <tr><td align="center" style="padding:40px 16px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#FFFFFF;border-radius:12px;overflow:hidden;border:1px solid #E4E8EC;">
+      <tr><td style="height:4px;background:#66CC66;font-size:0;line-height:0;">&nbsp;</td></tr>
+      <tr><td class="px" style="padding:36px 40px 8px 40px;">
+        <img src="https://seven-swart-delta.vercel.app/logo.png" width="132" height="44" alt="Seven Suprimentos Industriais" style="display:block;border:0;width:132px;height:auto;">
+      </td></tr>
+      <tr><td class="px" style="padding:28px 40px 0 40px;font-family:Arial,Helvetica,sans-serif;">
+        <p style="margin:0 0 8px 0;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:#3E9E3E;font-weight:bold;">Nova senha</p>
+        <h1 style="margin:0 0 16px 0;font-size:24px;line-height:1.3;color:#0B1A2A;font-weight:bold;">Redefinir sua senha</h1>
+        <p style="margin:0 0 12px 0;font-size:15px;line-height:1.6;color:#344054;">Recebemos um pedido para criar uma senha nova para o login <strong style="color:#0B1A2A;">{{ .Email }}</strong> no Seven OS.</p>
+      </td></tr>
+      <tr><td class="px" style="padding:28px 40px 8px 40px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="border-radius:8px;background:#0B1A2A;">
+            <a href="{{ if .RedirectTo }}{{ .RedirectTo }}?convite={{ .TokenHash }}&tipo=senha{{ else }}{{ .ConfirmationURL }}{{ end }}" target="_blank" style="display:inline-block;padding:14px 28px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;color:#FFFFFF;text-decoration:none;border-radius:8px;">Criar nova senha</a>
+          </td>
+        </tr></table>
+      </td></tr>
+      <tr><td class="px" style="padding:20px 40px 32px 40px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;color:#5B6675;">
+        <p style="margin:0;">Este link funciona uma vez e vale por tempo limitado. Sua senha atual continua valendo até você criar a nova.</p>
+        <p style="margin:12px 0 0 0;">Se o botão não abrir, copie e cole este endereço no navegador:<br>
+        <a href="{{ if .RedirectTo }}{{ .RedirectTo }}?convite={{ .TokenHash }}&tipo=senha{{ else }}{{ .ConfirmationURL }}{{ end }}" style="color:#0B1A2A;word-break:break-all;">{{ if .RedirectTo }}{{ .RedirectTo }}?convite={{ .TokenHash }}&tipo=senha{{ else }}{{ .ConfirmationURL }}{{ end }}</a></p>
+      </td></tr>
+      <tr><td class="px" style="padding:20px 40px;background:#F8FAFB;border-top:1px solid #E4E8EC;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#8A94A3;">
+        Seven Suprimentos Industriais &middot; Seven OS<br>
+        Se você não pediu para trocar a senha, ignore este e-mail. Nada muda na sua conta.
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>
