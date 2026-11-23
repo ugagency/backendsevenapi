@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 from typing import Tuple
 
@@ -19,21 +20,40 @@ class UsuarioOS:
     contas_detalhe: Tuple[dict, ...] = ()
 
 
+# Cadastro do OS em memoria por poucos segundos: toda chamada precisa dele, e cada ida ao banco
+# atravessa a rede ate o Supabase. Qualquer alteracao na administracao limpa o cache (main.py).
+_CACHE_OS = {}
+_TTL_OS = 20  # segundos
+
+
+def limpar_cache_os() -> None:
+    _CACHE_OS.clear()
+
+
 def carregar_usuario_os(user_id: str):
-    """Le o cadastro do OS. Devolve None se a pessoa nao existe ou esta inativa."""
+    """Le o cadastro do OS numa unica consulta. Devolve None se a pessoa nao existe ou esta inativa."""
+    agora = time.time()
+    em_cache = _CACHE_OS.get(user_id)
+    if em_cache and agora - em_cache[0] < _TTL_OS:
+        return em_cache[1]
     with db.conexao() as conn:
-        linha = conn.execute(
-            "select nome, email, perfil, ativo from usuarios where user_id = %s", (user_id,)
-        ).fetchone()
-        if not linha or not linha[3]:
-            return None
-        contas = conn.execute(
-            "select uc.conta_id, c.nome, c.cnpj, c.filial from usuario_contas uc join contas_portal c on c.id = uc.conta_id "
-            "where uc.user_id = %s and c.ativa order by uc.conta_id", (user_id,)
+        linhas = conn.execute(
+            "select u.nome, u.email, u.perfil, u.ativo, c.id, c.nome, c.cnpj, c.filial "
+            "from usuarios u left join usuario_contas uc on uc.user_id = u.user_id "
+            "left join contas_portal c on c.id = uc.conta_id and c.ativa "
+            "where u.user_id = %s order by c.id", (user_id,)
         ).fetchall()
-    return {"nome": linha[0] or "", "email": linha[1] or "", "perfil": linha[2],
-            "contas": tuple(c[0] for c in contas),
-            "contas_detalhe": tuple({"id": c[0], "nome": c[1], "cnpj": c[2], "filial": c[3]} for c in contas)}
+    if not linhas or not linhas[0][3]:
+        dados = None
+    else:
+        contas = [l for l in linhas if l[4] is not None]
+        dados = {"nome": linhas[0][0] or "", "email": linhas[0][1] or "", "perfil": linhas[0][2],
+                 "contas": tuple(c[4] for c in contas),
+                 "contas_detalhe": tuple({"id": c[4], "nome": c[5], "cnpj": c[6], "filial": c[7]} for c in contas)}
+    if len(_CACHE_OS) > 500:
+        _CACHE_OS.clear()
+    _CACHE_OS[user_id] = (agora, dados)
+    return dados
 
 
 def usuario_os(u: Usuario = Depends(usuario_atual)) -> UsuarioOS:

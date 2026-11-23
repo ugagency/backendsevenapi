@@ -18,6 +18,15 @@ const CHAVE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const sql = postgres(Deno.env.get("SUPABASE_DB_URL")!, { max: 1, prepare: false });
 const admin = createClient(URL_SUPA, CHAVE, { auth: { persistSession: false, autoRefreshToken: false } });
 
+// Link limpo, no endereco do proprio Seven OS: a pagina /definir-senha troca o codigo pelo login
+// (verifyOtp). Sem passar pela pagina do Supabase e sem depender da lista de Redirect URLs.
+// Sem redirect_to, cai no link padrao do Supabase.
+type Props = { action_link: string; hashed_token: string; verification_type: string };
+const linkDe = (p: Props, redirectTo?: string) =>
+  redirectTo
+    ? `${redirectTo}?convite=${p.hashed_token}${p.verification_type === "recovery" ? "&tipo=senha" : ""}`
+    : p.action_link;
+
 const resp = (status: number, corpo: unknown) =>
   new Response(JSON.stringify(corpo), { status, headers: { "Content-Type": "application/json" } });
 
@@ -28,7 +37,7 @@ Deno.serve(async (req) => {
   const { data: quem, error: eQuem } = await admin.auth.getUser(token);
   if (eQuem || !quem?.user) return resp(401, { erro: "Login invalido ou expirado." });
 
-  let corpo: { email?: string; schema?: string; modo?: string; redirect_to?: string; reenviar?: boolean };
+  let corpo: { email?: string; schema?: string; modo?: string; redirect_to?: string; reenviar?: boolean; nome?: string };
   try { corpo = await req.json(); } catch { return resp(400, { erro: "Corpo invalido." }); }
   const email = (corpo.email || "").trim().toLowerCase();
   const schema = corpo.schema || "";
@@ -41,6 +50,7 @@ Deno.serve(async (req) => {
   if (!ok.length) return resp(403, { erro: "Somente administrador ou suporte do Seven OS pode convidar." });
 
   const redirectTo = corpo.redirect_to || undefined;
+  const meta = corpo.nome ? { nome: String(corpo.nome).slice(0, 120) } : undefined; // so para a saudacao na tela de senha
   const ja = await sql`select id from auth.users where lower(email) = ${email} limit 1`;
   if (ja.length && !corpo.reenviar) return resp(200, { user_id: ja[0].id, ja_existia: true });
   if (ja.length) {
@@ -51,15 +61,15 @@ Deno.serve(async (req) => {
     }
     const { data, error } = await admin.auth.admin.generateLink({ type: "recovery", email, options: { redirectTo } });
     if (error) return resp(502, { erro: `O Supabase nao gerou o link: ${error.message}` });
-    return resp(200, { user_id: ja[0].id, ja_existia: true, modo, link: data.properties.action_link });
+    return resp(200, { user_id: ja[0].id, ja_existia: true, modo, link: linkDe(data.properties, redirectTo) });
   }
 
   if (modo === "email") {
-    const { data, error } = await admin.auth.admin.inviteUserByEmail(email, { redirectTo });
+    const { data, error } = await admin.auth.admin.inviteUserByEmail(email, { redirectTo, data: meta });
     if (error) return resp(502, { erro: `O Supabase nao enviou o convite: ${error.message}` });
     return resp(201, { user_id: data.user.id, ja_existia: false, modo });
   }
-  const { data, error } = await admin.auth.admin.generateLink({ type: "invite", email, options: { redirectTo } });
+  const { data, error } = await admin.auth.admin.generateLink({ type: "invite", email, options: { redirectTo, data: meta } });
   if (error) return resp(502, { erro: `O Supabase nao gerou o convite: ${error.message}` });
-  return resp(201, { user_id: data.user.id, ja_existia: false, modo, link: data.properties.action_link });
+  return resp(201, { user_id: data.user.id, ja_existia: false, modo, link: linkDe(data.properties, redirectTo) });
 });

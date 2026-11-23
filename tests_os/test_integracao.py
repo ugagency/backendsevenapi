@@ -326,7 +326,7 @@ def test_14_convite(como, app, monkeypatch):
         assert d["link_convite"] == "https://convite/abc" and d["convite"] == "link" and d["user_id"] == novo_id
         url, headers, corpo = chamadas[0]
         assert url == "https://fn/os-convidar" and headers["Authorization"] == "Bearer admin"
-        assert corpo == {"email": "pessoa@fora", "schema": "os_homolog", "modo": "link", "redirect_to": "https://front/definir-senha"}
+        assert corpo == {"email": "pessoa@fora", "schema": "os_homolog", "modo": "link", "redirect_to": "https://front/definir-senha", "nome": "Pessoa"}
         with psycopg.connect(URL) as conn:
             aud = conn.execute("select depois::text from os_homolog.auditoria where entidade = 'usuario' and entidade_id = %s", (novo_id,)).fetchone()[0]
         assert "convite" in aud and "https://convite" not in aud  # o link nunca vai para a auditoria

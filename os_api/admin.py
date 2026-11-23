@@ -90,7 +90,7 @@ def _checar_perfil(perfil):
         raise HTTPException(status_code=400, detail=f"Perfil invalido. Use um de {list(PERFIS)}.")
 
 
-def _convidar(cfg, token: str, email: str, modo: str, reenviar: bool = False) -> dict:
+def _convidar(cfg, token: str, email: str, modo: str, reenviar: bool = False, nome: str = "") -> dict:
     """Pede o login novo a Edge Function os-convidar. O os_api nao tem a chave secreta;
     a funcao confere de novo, com o token de quem esta logado, que e um administrador."""
     if not cfg.convite_url:
@@ -100,7 +100,7 @@ def _convidar(cfg, token: str, email: str, modo: str, reenviar: bool = False) ->
             cfg.convite_url,
             headers={"apikey": cfg.supabase_key, "Authorization": f"Bearer {token}"},
             json={"email": email, "schema": cfg.schema, "modo": modo, "redirect_to": cfg.convite_redirect or None,
-                  **({"reenviar": True} if reenviar else {})},
+                  **({"reenviar": True} if reenviar else {}), **({"nome": nome} if nome else {})},
             timeout=20,
         )
     except httpx.HTTPError:
@@ -141,7 +141,7 @@ def rotas_admin() -> APIRouter:
         convite = None
         if uid is None:
             # fora da transacao: a chamada externa nao segura conexao do banco
-            convite = _convidar(request.app.state.cfg, authorization[7:].strip(), email, body.convite)
+            convite = _convidar(request.app.state.cfg, authorization[7:].strip(), email, body.convite, nome=body.nome.strip())
             uid = convite["user_id"]
         uid = str(uid)
         with db.conexao() as conn:

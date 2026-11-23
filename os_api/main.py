@@ -1,10 +1,11 @@
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import VERSAO, db
-from .acesso import UsuarioOS, usuario_os
+from .acesso import UsuarioOS, limpar_cache_os, usuario_os
 from .admin import rotas_admin
 from .assistente import rotas_assistente
 from .captura import rotas_captura
@@ -16,6 +17,9 @@ from .produtos import rotas_produtos
 from .relatorios import rotas_relatorios
 from .auth import usuario_atual
 from .config import Config
+
+
+LENTO_MS = 500
 
 
 def criar_app(cfg: Config = None, iniciar_banco: bool = True) -> FastAPI:
@@ -37,6 +41,20 @@ def criar_app(cfg: Config = None, iniciar_banco: bool = True) -> FastAPI:
         expose_headers=["Content-Disposition"],
         allow_headers=["Authorization", "Content-Type"],
     )
+
+    @app.middleware("http")
+    async def tempo(request, call_next):
+        """Mede cada chamada (cabecalho Server-Timing, visivel no F12 do navegador) e avisa no console
+        as lentas. Alteracao na administracao limpa o cache de cadastro."""
+        t0 = time.perf_counter()
+        resposta = await call_next(request)
+        ms = (time.perf_counter() - t0) * 1000
+        resposta.headers["Server-Timing"] = f"os;dur={ms:.0f}"
+        if request.method != "GET" and request.url.path.startswith("/os/admin"):
+            limpar_cache_os()
+        if ms > LENTO_MS:
+            print(f"[os_api] lento {ms:.0f} ms {request.method} {request.url.path}", flush=True)
+        return resposta
 
     # Unica rota sem login.
     publico = APIRouter(prefix="/os")
