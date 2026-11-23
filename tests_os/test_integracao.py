@@ -294,6 +294,51 @@ def test_13_admin_real(como):
     assert c.patch(f"/os/admin/usuarios/{alvo['user_id']}", json={"contas": [1, conta["id"]]}).json()["contas"] == [1, conta["id"]]
     adm = next(x for x in us if x["email"] == "admin@teste")
     assert c.patch(f"/os/admin/usuarios/{adm['user_id']}", json={"ativo": False}).status_code == 409  # ultimo administrador
-    assert c.post("/os/admin/usuarios", json={"email": "ninguem@teste", "perfil": "cotacao"}).status_code == 404
+    assert c.post("/os/admin/usuarios", json={"email": "ninguem@teste", "perfil": "cotacao"}).status_code == 503  # convite sem URL configurada
     eu = como("cotacao1").get("/os/eu").json()
     assert [x["id"] for x in eu["contas"]] == [1, conta["id"]] and eu["perfil"] == "cotacao"
+
+
+def test_14_convite(como, app, monkeypatch):
+    import dataclasses
+    import httpx as _httpx
+    from os_api import admin
+    with psycopg.connect(URL) as conn:
+        novo_id = str(conn.execute("select os_homolog.auth_id_por_email('convidado@novo')").fetchone()[0])
+    chamadas = []
+
+    def falso_post(url, headers=None, json=None, timeout=None):
+        chamadas.append((url, headers, json))
+        return _httpx.Response(201, json={"user_id": novo_id, "ja_existia": False, "modo": json["modo"], "link": "https://convite/abc"})
+
+    monkeypatch.setattr(admin.httpx, "post", falso_post)
+    cfg_antes = app.app.state.cfg
+    app.app.state.cfg = dataclasses.replace(cfg_antes, convite_url="https://fn/os-convidar", convite_redirect="https://front/definir-senha")
+    try:
+        c = como("cotacao1")
+        assert c.post("/os/admin/usuarios", json={"email": "Pessoa@Fora", "perfil": "cotacao"}).status_code == 403
+        assert not chamadas
+        c = como("admin")
+        assert c.post("/os/admin/usuarios", json={"email": "x@fora", "perfil": "cotacao", "convite": "fax"}).status_code == 400
+        r = c.post("/os/admin/usuarios", json={"email": "Pessoa@Fora", "nome": "Pessoa", "perfil": "cotacao", "contas": [1]})
+        assert r.status_code == 201, r.text
+        d = r.json()
+        assert d["link_convite"] == "https://convite/abc" and d["convite"] == "link" and d["user_id"] == novo_id
+        url, headers, corpo = chamadas[0]
+        assert url == "https://fn/os-convidar" and headers["Authorization"] == "Bearer admin"
+        assert corpo == {"email": "pessoa@fora", "schema": "os_homolog", "modo": "link", "redirect_to": "https://front/definir-senha"}
+        with psycopg.connect(URL) as conn:
+            aud = conn.execute("select depois::text from os_homolog.auditoria where entidade = 'usuario' and entidade_id = %s", (novo_id,)).fetchone()[0]
+        assert "convite" in aud and "https://convite" not in aud  # o link nunca vai para a auditoria
+        # link novo para quem ja tem login (convite expirado ou senha esquecida)
+        r = c.post(f"/os/admin/usuarios/{novo_id}/link-acesso", json={})
+        assert r.status_code == 200 and r.json()["link_convite"] == "https://convite/abc"
+        assert chamadas[-1][2]["reenviar"] is True and chamadas[-1][2]["email"] == "pessoa@fora"
+        assert como("supervisor").post(f"/os/admin/usuarios/{novo_id}/link-acesso", json={}).status_code == 403
+        c = como("admin")
+        # servico de convite fora do ar: erro claro, nada gravado
+        monkeypatch.setattr(admin.httpx, "post", lambda *a, **k: _httpx.Response(404, json={}))
+        r = c.post("/os/admin/usuarios", json={"email": "outra@fora", "perfil": "cotacao"})
+        assert r.status_code == 503 and "nao publicado" in r.json()["detail"]
+    finally:
+        app.app.state.cfg = cfg_antes

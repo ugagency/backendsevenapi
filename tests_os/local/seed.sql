@@ -2,6 +2,7 @@
 alter role os_app login;
 insert into auth.users (email) values ('admin@teste'), ('supervisor@teste'), ('cotacao@teste'), ('suporte@teste'), ('cotacao1@teste')
 on conflict (email) do nothing;
+insert into auth.users (email) values ('convidado@novo') on conflict (email) do nothing;
 insert into os_homolog.usuarios (user_id, nome, email, perfil, ativo)
 select id, initcap(split_part(email, '@', 1)), email,
        case split_part(email, '@', 1) when 'admin' then 'administrador' when 'supervisor' then 'supervisor' when 'suporte' then 'suporte' else 'cotacao' end, true

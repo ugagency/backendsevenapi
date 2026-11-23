@@ -11,6 +11,8 @@ class Config:
     supabase_url: str
     supabase_key: str  # chave publica (publishable/anon). O os_api nunca usa a chave secreta.
     cors_origens: tuple
+    convite_url: str = ""  # Edge Function os-convidar no Supabase (unica que cria login)
+    convite_redirect: str = ""  # pagina do front onde o convidado define a senha
 
     @staticmethod
     def do_ambiente() -> "Config":
@@ -20,10 +22,13 @@ class Config:
         if os.getenv("SUPABASE_SECRET_KEY"):
             raise RuntimeError("O os_api nao deve receber SUPABASE_SECRET_KEY. Remova do ambiente deste servico.")
         origens = tuple(o.strip() for o in os.getenv("OS_CORS_ORIGINS", "").split(",") if o.strip())
+        supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
         return Config(
             database_url=os.getenv("OS_DATABASE_URL", ""),
             schema=schema,
-            supabase_url=os.getenv("SUPABASE_URL", "").rstrip("/"),
+            supabase_url=supabase_url,
             supabase_key=os.getenv("SUPABASE_KEY", ""),
             cors_origens=origens,
+            convite_url=os.getenv("OS_CONVITE_URL", f"{supabase_url}/functions/v1/os-convidar" if supabase_url else ""),
+            convite_redirect=os.getenv("OS_CONVITE_REDIRECT", ""),
         )

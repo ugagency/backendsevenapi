@@ -76,7 +76,7 @@ Permissões no código, como lista fixa: `fila.ver`, `captura.rodar`, `captura.b
 
 ## Telas
 
-- `/os/admin/usuarios`: lista, convite por e-mail, perfil, contas liberadas, ativo.
+- `/os/admin/usuarios`: lista, convite (link para o administrador enviar ou e-mail do Supabase, via Edge Function `os-convidar`), perfil, contas liberadas, ativo. `/os/admin/usuarios/{id}/link-acesso`: link novo para convite expirado ou senha esquecida.
 - `/os/admin/contas`: contas e portais, situação da credencial (cadastrada, origem da última leitura), botão para cadastrar ou trocar senha.
 - `/os/admin/parametros`: agenda do robô (horários e rodadas por dia), limites de alerta, listas.
 

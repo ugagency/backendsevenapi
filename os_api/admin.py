@@ -1,7 +1,8 @@
 """Rotas de administracao da Spec 01. Toda gravacao vai para a auditoria na mesma transacao."""
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from . import db, validacao
@@ -16,6 +17,11 @@ class NovoUsuario(BaseModel):
     perfil: str
     ativo: bool = False
     contas: List[int] = []
+    convite: str = "link"  # "link": devolve o link para o administrador enviar; "email": o Supabase envia
+
+
+class NovoLink(BaseModel):
+    convite: str = "link"
 
 
 class AlteraUsuario(BaseModel):
@@ -84,6 +90,32 @@ def _checar_perfil(perfil):
         raise HTTPException(status_code=400, detail=f"Perfil invalido. Use um de {list(PERFIS)}.")
 
 
+def _convidar(cfg, token: str, email: str, modo: str, reenviar: bool = False) -> dict:
+    """Pede o login novo a Edge Function os-convidar. O os_api nao tem a chave secreta;
+    a funcao confere de novo, com o token de quem esta logado, que e um administrador."""
+    if not cfg.convite_url:
+        raise HTTPException(status_code=503, detail="Convite indisponivel: OS_CONVITE_URL nao configurada.")
+    try:
+        r = httpx.post(
+            cfg.convite_url,
+            headers={"apikey": cfg.supabase_key, "Authorization": f"Bearer {token}"},
+            json={"email": email, "schema": cfg.schema, "modo": modo, "redirect_to": cfg.convite_redirect or None,
+                  **({"reenviar": True} if reenviar else {})},
+            timeout=20,
+        )
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="Nao foi possivel falar com o servico de convite agora.")
+    try:
+        d = r.json()
+    except ValueError:
+        d = {}
+    if r.status_code == 404:
+        raise HTTPException(status_code=503, detail="Servico de convite ainda nao publicado no Supabase.")
+    if r.status_code not in (200, 201) or not d.get("user_id"):
+        raise HTTPException(status_code=502, detail=d.get("erro") or f"Convite recusado (status {r.status_code}).")
+    return d
+
+
 def rotas_admin() -> APIRouter:
     r = APIRouter(prefix="/os/admin")
 
@@ -95,14 +127,24 @@ def rotas_admin() -> APIRouter:
         return [_linha_usuario(x) for x in rows]
 
     @r.post("/usuarios", status_code=201)
-    def criar_usuario(body: NovoUsuario, u: UsuarioOS = Depends(exigir("admin.usuarios"))):
+    def criar_usuario(body: NovoUsuario, request: Request, authorization: str = Header(default=""),
+                      u: UsuarioOS = Depends(exigir("admin.usuarios"))):
         _checar_perfil(body.perfil)
+        if body.convite not in ("link", "email"):
+            raise HTTPException(status_code=400, detail="Convite deve ser 'link' ou 'email'.")
         email = body.email.strip().lower()
         with db.conexao() as conn:
             uid = conn.execute("select auth_id_por_email(%s)", (email,)).fetchone()[0]
-            if uid is None:
-                raise HTTPException(status_code=404, detail="Essa pessoa ainda nao tem login no sistema. O convite por e-mail ainda nao esta disponivel.")
-            uid = str(uid)
+            if uid is not None and _usuario(conn, str(uid)):
+                raise HTTPException(status_code=409, detail="Essa pessoa ja esta cadastrada no Seven OS.")
+            _checar_contas(conn, body.contas)
+        convite = None
+        if uid is None:
+            # fora da transacao: a chamada externa nao segura conexao do banco
+            convite = _convidar(request.app.state.cfg, authorization[7:].strip(), email, body.convite)
+            uid = convite["user_id"]
+        uid = str(uid)
+        with db.conexao() as conn:
             if _usuario(conn, uid):
                 raise HTTPException(status_code=409, detail="Essa pessoa ja esta cadastrada no Seven OS.")
             _checar_contas(conn, body.contas)
@@ -111,8 +153,33 @@ def rotas_admin() -> APIRouter:
                 (uid, body.nome.strip(), email, body.perfil, body.ativo, u.id))
             _gravar_contas(conn, uid, body.contas)
             depois = _usuario(conn, uid)
-            auditar(conn, origem=_origem(u), entidade="usuario", entidade_id=uid, acao="criar", user_id=u.id, depois=depois)
-        return depois
+            if convite and not convite.get("ja_existia"):
+                depois_aud = {**depois, "convite": body.convite}  # o link nunca vai para a auditoria
+            else:
+                depois_aud = depois
+            auditar(conn, origem=_origem(u), entidade="usuario", entidade_id=uid, acao="criar", user_id=u.id, depois=depois_aud)
+        resposta = dict(depois)
+        if convite and not convite.get("ja_existia"):
+            resposta["convite"] = body.convite
+            if convite.get("link"):
+                resposta["link_convite"] = convite["link"]
+        return resposta
+
+    @r.post("/usuarios/{uid}/link-acesso")
+    def novo_link(uid: str, body: NovoLink, request: Request, authorization: str = Header(default=""),
+                  u: UsuarioOS = Depends(exigir("admin.usuarios"))):
+        """Convite expirado ou senha esquecida: gera (ou manda por e-mail) um link novo para definir a senha."""
+        if body.convite not in ("link", "email"):
+            raise HTTPException(status_code=400, detail="Convite deve ser 'link' ou 'email'.")
+        with db.conexao() as conn:
+            alvo = _usuario(conn, uid)
+        if not alvo:
+            raise HTTPException(status_code=404, detail="Usuario nao encontrado no Seven OS.")
+        d = _convidar(request.app.state.cfg, authorization[7:].strip(), alvo["email"], body.convite, reenviar=True)
+        with db.conexao() as conn:
+            auditar(conn, origem=_origem(u), entidade="usuario", entidade_id=uid, acao="alterar", user_id=u.id,
+                    depois={"email": alvo["email"], "link_acesso": body.convite})  # o link nunca vai para a auditoria
+        return {"email": alvo["email"], "convite": body.convite, **({"link_convite": d["link"]} if d.get("link") else {})}
 
     @r.patch("/usuarios/{uid}")
     def alterar_usuario(uid: str, body: AlteraUsuario, u: UsuarioOS = Depends(exigir("admin.usuarios"))):
