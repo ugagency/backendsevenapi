@@ -51,25 +51,32 @@ Deno.serve(async (req) => {
 
   const redirectTo = corpo.redirect_to || undefined;
   const meta = corpo.nome ? { nome: String(corpo.nome).slice(0, 120) } : undefined; // so para a saudacao na tela de senha
-  const ja = await sql`select id from auth.users where lower(email) = ${email} limit 1`;
-  if (ja.length && !corpo.reenviar) return resp(200, { user_id: ja[0].id, ja_existia: true });
-  if (ja.length) {
+  const ja = await sql`select id, email_confirmed_at, last_sign_in_at from auth.users where lower(email) = ${email} limit 1`;
+  // Login que existe mas nunca foi usado (ex.: cadastro antigo pela tela de login, sem confirmar o e-mail):
+  // trata como convite novo, senao a pessoa nunca recebe nada.
+  const nuncaUsado = ja.length > 0 && !ja[0].email_confirmed_at && !ja[0].last_sign_in_at;
+  if (ja.length && !nuncaUsado && !corpo.reenviar) return resp(200, { user_id: ja[0].id, ja_existia: true });
+  // Link ou e-mail para (re)definir a senha de um login que ja existe.
+  const recuperar = async () => {
     if (modo === "email") {
       const { error } = await admin.auth.resetPasswordForEmail(email, { redirectTo });
       if (error) return resp(502, { erro: `O Supabase nao enviou o e-mail: ${error.message}` });
-      return resp(200, { user_id: ja[0].id, ja_existia: true, modo });
+      return resp(200, { user_id: ja[0].id, ja_existia: true, modo, enviado: true });
     }
     const { data, error } = await admin.auth.admin.generateLink({ type: "recovery", email, options: { redirectTo } });
     if (error) return resp(502, { erro: `O Supabase nao gerou o link: ${error.message}` });
     return resp(200, { user_id: ja[0].id, ja_existia: true, modo, link: linkDe(data.properties, redirectTo) });
-  }
+  };
+  if (ja.length && !nuncaUsado) return await recuperar();
 
   if (modo === "email") {
     const { data, error } = await admin.auth.admin.inviteUserByEmail(email, { redirectTo, data: meta });
+    if (error && nuncaUsado) return await recuperar();
     if (error) return resp(502, { erro: `O Supabase nao enviou o convite: ${error.message}` });
-    return resp(201, { user_id: data.user.id, ja_existia: false, modo });
+    return resp(201, { user_id: data.user.id, ja_existia: false, modo, enviado: true });
   }
   const { data, error } = await admin.auth.admin.generateLink({ type: "invite", email, options: { redirectTo, data: meta } });
+  if (error && nuncaUsado) return await recuperar();
   if (error) return resp(502, { erro: `O Supabase nao gerou o convite: ${error.message}` });
   return resp(201, { user_id: data.user.id, ja_existia: false, modo, link: linkDe(data.properties, redirectTo) });
 });

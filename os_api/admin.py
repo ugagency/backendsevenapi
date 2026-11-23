@@ -139,9 +139,11 @@ def rotas_admin() -> APIRouter:
                 raise HTTPException(status_code=409, detail="Essa pessoa ja esta cadastrada no Seven OS.")
             _checar_contas(conn, body.contas)
         convite = None
-        if uid is None:
-            # fora da transacao: a chamada externa nao segura conexao do banco
-            convite = _convidar(request.app.state.cfg, authorization[7:].strip(), email, body.convite, nome=body.nome.strip())
+        cfg = request.app.state.cfg
+        # fora da transacao: a chamada externa nao segura conexao do banco. Com login ja existente a funcao
+        # so age se ele nunca foi usado (cadastro antigo sem confirmar): ai manda o convite tambem.
+        if uid is None or cfg.convite_url:
+            convite = _convidar(cfg, authorization[7:].strip(), email, body.convite, nome=body.nome.strip())
             uid = convite["user_id"]
         uid = str(uid)
         with db.conexao() as conn:
@@ -153,13 +155,14 @@ def rotas_admin() -> APIRouter:
                 (uid, body.nome.strip(), email, body.perfil, body.ativo, u.id))
             _gravar_contas(conn, uid, body.contas)
             depois = _usuario(conn, uid)
-            if convite and not convite.get("ja_existia"):
+            mandou = bool(convite and (convite.get("link") or convite.get("enviado")))
+            if mandou:
                 depois_aud = {**depois, "convite": body.convite}  # o link nunca vai para a auditoria
             else:
                 depois_aud = depois
             auditar(conn, origem=_origem(u), entidade="usuario", entidade_id=uid, acao="criar", user_id=u.id, depois=depois_aud)
         resposta = dict(depois)
-        if convite and not convite.get("ja_existia"):
+        if mandou:
             resposta["convite"] = body.convite
             if convite.get("link"):
                 resposta["link_convite"] = convite["link"]
