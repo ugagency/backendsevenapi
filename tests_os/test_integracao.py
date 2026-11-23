@@ -233,7 +233,7 @@ def test_10_assistente_respeita_perfil_e_nao_inventa(como):
     r4 = como("cotacao").post("/os/assistente", json={"pergunta": "o que encerra em 5 dias sem fornecedor?", "conversa_id": r["conversa_id"]}).json()
     assert r4["consulta"] == "itens_por_prazo" and "sem_fornecedor=1" in r4["link"]
     r5 = como("cotacao").post("/os/assistente", json={"pergunta": "ja cotamos 'peca que nao existe xyz'?"}).json()
-    assert r5["tabela"] is None and "Nao encontrei" in r5["texto"]
+    assert r5["tabela"] is None and "Não encontrei" in r5["texto"]
     assert como("cotacao").post("/os/assistente", json={"pergunta": "painel", "conversa_id": 999999}).status_code == 404
     c = como("cotacao")
     assert len(c.get(f"/os/assistente/conversas/{r['conversa_id']}").json()) == 4
