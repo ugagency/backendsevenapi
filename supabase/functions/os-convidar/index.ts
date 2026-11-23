@@ -2,7 +2,8 @@
 // Unico lugar que usa a chave secreta para criar login. Fica no Supabase (que ja tem a chave),
 // para que nem o os_api nem o robo precisem dela.
 // Regras:
-//  - quem chama precisa estar logado e ser administrador ativo do Seven OS no schema informado;
+//  - quem chama precisa estar logado e ser administrador ou suporte ativo do Seven OS no schema informado
+//    (conferido aqui dentro com o proprio token; por isso verify_jwt fica desligado no gateway);
 //  - modo "link": cria o login e devolve o link de convite (o administrador envia por WhatsApp ou e-mail);
 //  - modo "email": cria o login e o Supabase envia o e-mail de convite;
 //  - se a pessoa ja tem login, so devolve o id (nada e enviado);
@@ -23,6 +24,7 @@ const resp = (status: number, corpo: unknown) =>
 Deno.serve(async (req) => {
   if (req.method !== "POST") return resp(405, { erro: "Use POST." });
   const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!token) return resp(401, { erro: "Login necessario." });
   const { data: quem, error: eQuem } = await admin.auth.getUser(token);
   if (eQuem || !quem?.user) return resp(401, { erro: "Login invalido ou expirado." });
 
@@ -35,8 +37,8 @@ Deno.serve(async (req) => {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return resp(400, { erro: "E-mail invalido." });
 
   const ok = await sql`select 1 from ${sql(schema)}.usuarios
-                       where user_id = ${quem.user.id} and ativo and perfil = 'administrador'`;
-  if (!ok.length) return resp(403, { erro: "Somente administrador do Seven OS pode convidar." });
+                       where user_id = ${quem.user.id} and ativo and perfil in ('administrador', 'suporte')`;  // os perfis com admin.usuarios (os_api/permissoes.py)
+  if (!ok.length) return resp(403, { erro: "Somente administrador ou suporte do Seven OS pode convidar." });
 
   const redirectTo = corpo.redirect_to || undefined;
   const ja = await sql`select id from auth.users where lower(email) = ${email} limit 1`;
