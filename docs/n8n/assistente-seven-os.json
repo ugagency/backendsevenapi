@@ -1,5 +1,4 @@
 {
-  "name": "Seven OS - assistente (escolhe a consulta)",
   "nodes": [
     {
       "parameters": {
@@ -12,55 +11,112 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        0,
-        0
-      ]
+        -288,
+        96
+      ],
+      "id": "3af9092d-1f54-478d-b005-1b0c71fa0f29",
+      "webhookId": "e0c02069-0253-4b28-90cb-3899baa2897f"
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'openai/gpt-4o-mini', temperature: 0, response_format: { type: 'json_object' }, provider: { data_collection: 'deny' }, messages: [ { role: 'system', content: \"Voce escolhe UMA consulta de uma lista fechada para responder a pergunta de um usuario de compras da Seven Suprimentos. Responda SOMENTE um JSON, sem texto fora dele, no formato {\\\"consulta\\\": \\\"...\\\", \\\"parametros\\\": {...}}.\\\\nConsultas permitidas:\\\\n- historico_produto: pergunta sobre ja ter cotado uma peca ou por quanto. parametros: {\\\"termo\\\": codigo, referencia ou nome da peca}\\\\n- fornecedores_produto: quem fornece a peca. parametros: {\\\"termo\\\": ...}\\\\n- buscar_produto: procurar uma peca. parametros: {\\\"termo\\\": ...}\\\\n- itens_por_prazo: o que encerra ate uma data. parametros: {\\\"ate\\\": \\\"AAAA-MM-DD\\\", \\\"sem_fornecedor\\\": true ou false}. Calcule a data a partir de hoje e do dia da semana informados.\\\\n- marcas_sem_fornecedor: marcas sem fornecedor cadastrado. parametros: {}\\\\n- indicadores: resumo do painel. parametros: {}\\\\nRegras: nunca escreva SQL; nunca invente codigos; se a pergunta nao se encaixar, use buscar_produto com as palavras principais como termo.\" }, { role: 'user', content: 'Hoje: ' + $json.body.hoje + ' (' + $json.body.dia_da_semana + '). Pergunta: ' + $json.body.pergunta } ] }) }}",
+        "promptType": "define",
+        "text": "={{ ($json.body.historico || []).length ? 'Conversa anterior:\\n' + $json.body.historico.map(m => (m.papel === 'usuario' ? 'Usuario: ' : 'Assistente: ') + m.texto).join('\\n') + '\\n\\n' : '' }}Pergunta atual: {{ $json.body.pergunta }}",
         "options": {
-          "timeout": 10000
+          "systemMessage": "=Voce e o assistente do Seven OS, sistema de cotacoes da Seven Suprimentos Industriais (fornecedora da Vale pelo portal Coupa). Hoje e {{ $json.body.hoje }} ({{ $json.body.dia_da_semana }}). Voce conversa com {{ $json.body.usuario.nome || 'o usuario' }}.\nResponda em portugues do Brasil, de forma direta e curta, como um colega de compras experiente. Escreva texto simples, sem markdown e sem tabelas: use quebras de linha e hifens para listas. Valores em reais no formato R$ 1.234,56.\nPara qualquer dado (pecas, codigos, cotacoes, precos, fornecedores, prazos, indicadores) use SEMPRE a ferramenta consultar_seven. Nunca invente numero, codigo, preco, fornecedor ou data: se a ferramenta nao trouxe, diga que nao encontrou. Voce pode chamar a ferramenta mais de uma vez (por exemplo, buscar a peca e depois o historico dela) e comparar os resultados.\nDatas relativas (amanha, sexta, esta semana, em 5 dias) devem ser convertidas para AAAA-MM-DD a partir da data de hoje.\nOs dados ja vem filtrados pelo perfil do usuario. Se uma coluna de preco ou margem nao vier, o perfil dele nao ve esse valor: nao estime nem comente o valor.\nUse a conversa anterior para entender referencias como esse item, o segundo, e o fornecedor dele.\nQuando houver muitas linhas, resuma o principal (maiores, mais recentes, mais urgentes) e diga que a tabela completa aparece abaixo da resposta.\nVoce so le dados. Se pedirem para alterar, aprovar, enviar ou apagar algo, explique que isso e feito nas telas do Seven OS.",
+          "maxIterations": 6
         }
       },
-      "name": "OpenRouter",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
       "position": [
-        260,
-        0
-      ]
+        -16,
+        96
+      ],
+      "id": "0f13e44f-aee2-4b75-9ffb-ceae27a3700a",
+      "name": "AI Agent"
     },
     {
       "parameters": {
-        "jsCode": "const txt = $input.first().json.choices?.[0]?.message?.content || '{}';\nlet r = {};\ntry { r = JSON.parse(txt); } catch (e) { r = {}; }\nreturn [{ json: { consulta: r.consulta, parametros: r.parametros || {} } }];"
-      },
-      "name": "Ler resposta",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        520,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "respondWith": "firstIncomingItem",
+        "respondWith": "json",
+        "responseBody": "={{ { resposta: $json.output } }}",
         "options": {}
       },
       "name": "Responder",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        780,
-        0
-      ]
+        400,
+        96
+      ],
+      "id": "0238f906-db79-4604-9382-41f3abc19df2"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-6-luna",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        304
+      ],
+      "id": "bd073052-5cac-4299-8788-a057ddc20c31",
+      "name": "OpenRouter Chat Model",
+      "credentials": {
+        "openRouterApi": {
+          "id": "XQDxdtOrH0qlMuBf",
+          "name": "OpenRouter renova"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Consulta os dados do Seven OS com o perfil do usuario. Escolha uma consulta: buscar_produto (procura pecas por codigo Vale, referencia ou nome; exige termo); historico_produto (cotacoes ja feitas de uma peca, com fornecedor, situacao, resultado e valores que o perfil permite; exige termo); fornecedores_produto (fornecedores vinculados a uma peca, com contato; exige termo); itens_por_prazo (itens abertos que encerram ate uma data; exige ate e aceita sem_fornecedor); marcas_sem_fornecedor (marcas recorrentes sem fornecedor); indicadores (resumo do painel dos ultimos 30 dias). Devolve resumo, colunas e linhas. Se vier o campo erro, corrija os parametros e tente de novo.",
+        "method": "POST",
+        "url": "={{ $('Webhook').first().json.body.api_url }}/os/assistente/ferramenta",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Assistente-Token",
+              "value": "={{ $('Webhook').first().json.body.token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "consulta",
+              "value": "={{ $fromAI('consulta', 'Uma de: buscar_produto, historico_produto, fornecedores_produto, itens_por_prazo, marcas_sem_fornecedor, indicadores', 'string') }}"
+            },
+            {
+              "name": "termo",
+              "value": "={{ $fromAI('termo', 'Codigo Vale, referencia ou nome da peca. Vazio se a consulta nao usa termo', 'string') }}"
+            },
+            {
+              "name": "ate",
+              "value": "={{ $fromAI('ate', 'Data limite AAAA-MM-DD para itens_por_prazo. Vazio nas outras consultas', 'string') }}"
+            },
+            {
+              "name": "sem_fornecedor",
+              "value": "={{ $fromAI('sem_fornecedor', 'true para so itens sem fornecedor em itens_por_prazo, senao false', 'boolean') }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.2,
+      "position": [
+        80,
+        304
+      ],
+      "id": "7c1e5b9a-3d42-4f0e-9a51-2b8f6c0d4e11",
+      "name": "consultar_seven"
     }
   ],
   "connections": {
@@ -68,25 +124,14 @@
       "main": [
         [
           {
-            "node": "OpenRouter",
+            "node": "AI Agent",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "OpenRouter": {
-      "main": [
-        [
-          {
-            "node": "Ler resposta",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ler resposta": {
+    "AI Agent": {
       "main": [
         [
           {
@@ -96,12 +141,38 @@
           }
         ]
       ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "consultar_seven": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
+  "pinData": {},
   "settings": {
     "executionOrder": "v1",
     "saveDataSuccessExecution": "none",
     "saveDataErrorExecution": "none",
     "saveManualExecutions": false
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
   }
 }

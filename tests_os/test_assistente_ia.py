@@ -1,4 +1,4 @@
-"""Escolha de consulta por IA (n8n): so a pergunta sai, a resposta e validada e ha volta para as regras."""
+"""Agente de IA (n8n): o que sai para o n8n, leitura da resposta, validacao da ferramenta e volta para as regras."""
 import httpx
 from os_api import assistente as a
 
@@ -25,41 +25,44 @@ def test_validar_aceita_so_lista_fechada():
     assert a.validar_escolha({"consulta": "buscar_produto", "parametros": {"termo": "x1", "sql": "select 1"}}) == ("buscar_produto", {"termo": "x1"})
 
 
+class _U:
+    nome = "Karen Silva"
+    permissoes = frozenset({"fila.ver", "preco_compra.ver"})
+
+
 def test_sem_url_usa_regras(monkeypatch):
     monkeypatch.delenv("OS_N8N_ASSISTENTE_URL", raising=False)
-    assert a.escolher_consulta_ia("quais indicadores?") is None
+    assert a.chamar_agente("quais indicadores?", [], "tok", "https://api", _U()) is None
 
 
-def test_ia_manda_so_pergunta_e_data(monkeypatch):
-    monkeypatch.setenv("OS_N8N_ASSISTENTE_URL", "https://n8n.exemplo/webhook/x")
-    monkeypatch.setenv("OS_N8N_TOKEN", "segredo-teste")
-    visto = {}
-
-    def falso(url, json=None, headers=None, timeout=None):
-        visto.update(url=url, json=json, headers=headers)
-        return _Resp(200, {"consulta": "marcas_sem_fornecedor", "parametros": {}})
-    monkeypatch.setattr(a.httpx, "post", falso)
-    assert a.escolher_consulta_ia("marcas sem fornecedor") == ("marcas_sem_fornecedor", {})
-    assert set(visto["json"]) == {"pergunta", "hoje", "dia_da_semana", "consultas"}
-    assert visto["headers"]["X-Seven-Token"] == "segredo-teste"
-
-
-def test_ia_sem_token_nao_manda_cabecalho(monkeypatch):
+def test_agente_recebe_pergunta_historico_e_sessao(monkeypatch):
     monkeypatch.setenv("OS_N8N_ASSISTENTE_URL", "https://n8n.exemplo/webhook/x")
     monkeypatch.delenv("OS_N8N_TOKEN", raising=False)
     visto = {}
 
     def falso(url, json=None, headers=None, timeout=None):
-        visto["headers"] = headers
-        return _Resp(200, {"consulta": "indicadores", "parametros": {}})
+        visto.update(json=json, headers=headers)
+        return _Resp(200, [{"output": "  Cotamos 3 vezes.  "}])
     monkeypatch.setattr(a.httpx, "post", falso)
-    assert a.escolher_consulta_ia("indicadores") == ("indicadores", {})
+    hist = [{"papel": "usuario", "texto": "oi"}]
+    assert a.chamar_agente("ja cotamos?", hist, "tok123", "https://api", _U()) == "Cotamos 3 vezes."
+    assert set(visto["json"]) == {"pergunta", "historico", "hoje", "dia_da_semana", "token", "api_url", "usuario"}
+    assert visto["json"]["token"] == "tok123" and visto["json"]["historico"] == hist
+    assert visto["json"]["usuario"] == {"nome": "Karen", "ve_valores": True}
     assert visto["headers"] == {}
 
 
-def test_ia_com_falha_volta_para_regras(monkeypatch):
+def test_agente_com_falha_volta_para_regras(monkeypatch):
     monkeypatch.setenv("OS_N8N_ASSISTENTE_URL", "https://n8n.exemplo/webhook/x")
     for falha in (lambda *a, **k: (_ for _ in ()).throw(httpx.ConnectTimeout("t")), lambda *a, **k: _Resp(500, {}),
-                  lambda *a, **k: _Resp(200, None), lambda *a, **k: _Resp(200, {"consulta": "inventada"})):
+                  lambda *a, **k: _Resp(200, None), lambda *a, **k: _Resp(200, {"output": "   "}), lambda *a, **k: _Resp(200, {"x": 1})):
         monkeypatch.setattr(a.httpx, "post", falha)
-        assert a.escolher_consulta_ia("qualquer coisa") is None
+        assert a.chamar_agente("indicadores", [], "t", "https://api", _U()) is None
+
+
+def test_parametros_da_ferramenta():
+    F = a.Ferramenta
+    assert a._par_ferramenta(F(consulta="itens_por_prazo", ate="2026-11-28", sem_fornecedor="true")) == ("itens_por_prazo", {"ate": "2026-11-28", "sem_fornecedor": True})
+    assert a._par_ferramenta(F(consulta="historico_produto", termo="")) is None
+    assert a._par_ferramenta(F(consulta="apagar_tudo", termo="x")) is None
+    assert a._par_ferramenta(F(consulta="buscar_produto", termo="rolamento", ate="lixo")) == ("buscar_produto", {"termo": "rolamento"})

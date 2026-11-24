@@ -1,27 +1,32 @@
-# Assistente do Seven OS no n8n
+# Assistente do Seven OS no n8n (agente conversacional)
 
-O n8n faz uma coisa só: recebe a pergunta, pede ao modelo (OpenRouter) para escolher UMA consulta da lista fechada e devolve
-`{"consulta": "...", "parametros": {...}}`. Quem executa a consulta, aplica a permissão e mostra preço é sempre o `os_api`.
+O assistente é um agente de IA no n8n (OpenRouter) que conversa com o usuário e lê os dados do Seven OS por uma ferramenta
+da própria API. O agente não tem acesso ao banco nem escreve SQL.
 
-## O que sai do sistema para o n8n
-Somente: texto da pergunta, data de hoje, dia da semana e a lista de nomes das consultas. Nunca histórico de conversa, preço,
-margem, fornecedor ou qualquer dado da Seven. O `os_api` valida o retorno: consulta fora da lista ou parâmetro desconhecido é
-descartado e o assistente usa as regras internas, sem erro para o usuário.
+## Como funciona
+1. O usuário pergunta na tela. A API (`POST /os/assistente`) cria uma sessão curta (código aleatório, vale 4 minutos e no
+   máximo 8 consultas) e chama o Webhook do n8n com: pergunta, últimas mensagens da conversa, data de hoje, primeiro nome do
+   usuário, se ele vê valores, o código da sessão e o endereço da API.
+2. O agente decide o que consultar e chama a ferramenta `consultar_seven`, que faz `POST {api}/os/assistente/ferramenta`
+   com o cabeçalho `X-Assistente-Token`.
+3. A API executa só a lista fechada de consultas (buscar_produto, historico_produto, fornecedores_produto, itens_por_prazo,
+   marcas_sem_fornecedor, indicadores), com as contas e a visibilidade de preço e margem do perfil de quem perguntou.
+4. O agente responde em texto. A API encerra a sessão, monta a tabela da última consulta para a tela e grava a conversa.
+5. Se o n8n falhar ou demorar mais que `OS_N8N_TIMEOUT` (padrão 50 s), o assistente responde pelas regras internas.
 
-## Montar no n8n (uma vez)
-1. Importar `assistente-seven-os.json` (Workflows > Import from file).
-2. No nó OpenRouter, escolher no campo de credencial a que o n8n de vocês já tem para o OpenRouter (Header Auth com
-   `Authorization: Bearer <chave>`). Nada novo para digitar.
-3. O Webhook não usa credencial: o segredo é o próprio caminho da URL, longo e aleatório (`seven-os-...`). Trate a URL como
-   senha: não publique nem coloque em código do front. Se vazar, mude o campo Path do Webhook e a variável na Vercel.
-4. O modelo está como `openai/gpt-4o-mini`; troque pelo que já usam, se preferir. O corpo já envia
-   `provider.data_collection = deny`, para o OpenRouter recusar provedores que guardam ou treinam com os dados (termo, item 3.3).
-5. O workflow já está com o salvamento de execuções desligado, para o texto das perguntas não ficar no histórico do n8n.
-   Confira essa configuração depois de importar.
-6. Ativar o workflow e copiar a URL de produção do Webhook (`.../webhook/seven-os-...`, não a de teste).
+Decisão do cliente (24/11/2026): o agente recebe tudo o que o perfil do usuário vê, inclusive preço e margem quando o perfil
+permite. Esses dados passam pelo n8n e pelo OpenRouter; o termo (itens 3.2/3.3) precisa refletir isso.
+
+## Montar no n8n
+1. Criar um workflow novo e colar o conteúdo de `assistente-seven-os.json` no editor (Ctrl+V).
+2. Conferir a credencial do nó OpenRouter Chat Model e o modelo.
+3. Ativar o workflow e copiar a URL de produção do Webhook.
+4. O salvamento de execuções está desligado no workflow, para perguntas e dados não ficarem no histórico do n8n.
+
+O Webhook não usa credencial: o segredo é o caminho da URL. Trate a URL como senha.
 
 ## Ligar no os_api (projeto `seven-os-api` na Vercel)
-- `OS_N8N_ASSISTENTE_URL` = URL de produção do Webhook (só essa variável)
-- `OS_N8N_TIMEOUT` (opcional, padrão 12 segundos)
-- `OS_N8N_TOKEN` só se um dia quiser exigir cabeçalho no Webhook; sem ela, nada é enviado.
-Depois, refazer o deploy. A resposta de `POST /os/assistente` passa a trazer `"motor": "ia"` ou `"motor": "regras"`.
+- `OS_N8N_ASSISTENTE_URL` = URL de produção do Webhook
+- `OS_N8N_TIMEOUT` (opcional, padrão 50)
+- `OS_API_URL_PUBLICA` (opcional) = endereço público da API, se o detectado automaticamente não servir
+Refazer o deploy. A resposta de `POST /os/assistente` traz `"motor": "ia"` ou `"motor": "regras"`.

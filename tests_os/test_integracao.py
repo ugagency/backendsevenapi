@@ -243,6 +243,40 @@ def test_10_assistente_respeita_perfil_e_nao_inventa(como):
     assert "105" not in textos and "150" not in textos
 
 
+
+def test_10b_agente_le_pela_ferramenta_com_o_perfil(como, monkeypatch):
+    from os_api import assistente
+    monkeypatch.setenv("OS_N8N_ASSISTENTE_URL", "https://n8n.exemplo/webhook/x")
+    visto = {}
+
+    def n8n_falso(url, json=None, headers=None, timeout=None):
+        cab = {"X-Assistente-Token": json["token"]}
+        r = app_cli.post("/os/assistente/ferramenta", json={"consulta": "historico_produto", "termo": "13900001"}, headers=cab)
+        visto["dados"] = r.json()
+        visto["invalida"] = app_cli.post("/os/assistente/ferramenta", json={"consulta": "drop", "termo": "x"}, headers=cab).json()
+        visto["token"] = json["token"]
+
+        class R:
+            status_code = 200
+
+            def json(self):
+                return {"output": "Sim, ja cotamos esse item."}
+        return R()
+    monkeypatch.setattr(assistente.httpx, "post", n8n_falso)
+
+    app_cli = como("suporte")
+    r = app_cli.post("/os/assistente", json={"pergunta": "ja cotamos 13900001?"}).json()
+    assert r["motor"] == "ia" and r["texto"] == "Sim, ja cotamos esse item." and r["consulta"] == "historico_produto"
+    assert not ({"Compra (un.)", "Venda (un.)", "Margem %"} & set(visto["dados"]["colunas"]))  # suporte nao ve valores
+    assert "erro" in visto["invalida"]
+    # sessao encerrada depois da resposta, e sem token nao entra
+    assert app_cli.post("/os/assistente/ferramenta", json={"consulta": "indicadores"}, headers={"X-Assistente-Token": visto["token"]}).status_code == 401
+    assert app_cli.post("/os/assistente/ferramenta", json={"consulta": "indicadores"}, headers={"X-Assistente-Token": ""}).status_code == 401
+
+    app_cli = como("admin")
+    r2 = app_cli.post("/os/assistente", json={"pergunta": "ja cotamos 13900001?"}).json()
+    assert "Margem %" in visto["dados"]["colunas"] and "Margem %" in r2["tabela"]["colunas"]
+
 def test_11_captura_planilha_e_sincronizacao(como):
     c = como("cotacao")
     d = c.get("/os/captura/dias").json()

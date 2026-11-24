@@ -1,25 +1,28 @@
-"""Spec 08: assistente somente leitura, com lista fechada de consultas.
+"""Spec 08: assistente somente leitura.
 
-O roteador escolhe UMA consulta da lista; quem executa e o os_api, com a permissao de quem perguntou.
-Valores (preco, margem) so aparecem na tabela montada pelo sistema e nunca entram em texto enviado a um modelo.
-A escolha da consulta e feita por um modelo de IA (OpenRouter, via workflow do n8n) quando OS_N8N_ASSISTENTE_URL esta
-configurada; o que sai do servidor e SO o texto da pergunta e a data de hoje, sem historico, sem preco e sem dado da Seven.
-O retorno do modelo e validado contra a lista fechada (consulta e parametros permitidos). Sem URL, com erro ou com resposta
-invalida, cai nas regras de `escolher_consulta`, que nao dependem de nada externo.
+Modo agente (quando OS_N8N_ASSISTENTE_URL esta configurada): um agente de IA no n8n (OpenRouter) conversa com o usuario e
+consulta os dados chamando POST /os/assistente/ferramenta. A ferramenta so executa a lista fechada de consultas abaixo,
+sempre com o perfil de quem perguntou (contas e visibilidade de preco/margem). O agente nao tem acesso ao banco nem SQL.
+O acesso da ferramenta e por um codigo de sessao aleatorio, de uso curto (poucos minutos), criado a cada pergunta.
+Decisao do cliente (24/11/2026): o agente recebe tudo o que o perfil do usuario ve, inclusive preco e margem quando o
+perfil permite. Sem URL, com erro ou com resposta invalida, o assistente cai nas regras de `escolher_consulta`.
 """
+import hashlib
 import os
 import re
+import secrets
 import unicodedata
 from datetime import date, timedelta
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 from psycopg.types.json import Jsonb
 
 from . import db
-from .acesso import UsuarioOS, exigir
+from .acesso import UsuarioOS, carregar_usuario_os, exigir
+from .permissoes import permissoes_do_perfil
 from .comum import lista, num, pode, um, valores_visiveis
 from .painel import calcular_painel
 
@@ -109,23 +112,76 @@ def validar_escolha(dados) -> Optional[tuple]:
     return consulta, par
 
 
-def escolher_consulta_ia(pergunta: str, hoje: Optional[date] = None) -> Optional[tuple]:
-    """Pede a um modelo (workflow do n8n -> OpenRouter) para escolher a consulta. Manda so a pergunta e a data.
-    Devolve (consulta, parametros) ou None para usar as regras."""
+DIAS_PT = ("segunda-feira", "terca-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sabado", "domingo")
+SESSAO_MINUTOS = 4
+SESSAO_MAX_CHAMADAS = 8
+
+
+class Ferramenta(BaseModel):
+    consulta: str
+    termo: Optional[str] = None
+    ate: Optional[str] = None
+    sem_fornecedor: Optional[object] = None
+
+
+def _hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _url_publica(request: Optional[Request]) -> str:
+    fixa = os.getenv("OS_API_URL_PUBLICA", "").strip().rstrip("/")
+    if fixa or request is None:
+        return fixa
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    local = host.startswith(("localhost", "127.0.0.1"))
+    return f"{'http' if local else 'https'}://{host}"
+
+
+def chamar_agente(pergunta: str, historico: list, token: str, api_url: str, u: UsuarioOS, hoje: Optional[date] = None) -> Optional[str]:
+    """Pede a resposta ao agente do n8n. Devolve o texto ou None (para usar as regras)."""
     url = os.getenv("OS_N8N_ASSISTENTE_URL", "").strip()
-    if not url:
+    if not url or not api_url:
         return None
     hoje = hoje or date.today()
-    token = os.getenv("OS_N8N_TOKEN", "").strip()
-    cab = {"X-Seven-Token": token} if token else {}
-    corpo = {"pergunta": pergunta, "hoje": hoje.isoformat(), "dia_da_semana": hoje.strftime("%A"), "consultas": list(CONSULTAS)}
+    corpo = {"pergunta": pergunta, "historico": historico, "hoje": hoje.isoformat(), "dia_da_semana": DIAS_PT[hoje.weekday()],
+             "token": token, "api_url": api_url,
+             "usuario": {"nome": (u.nome or "").split(" ")[0], "ve_valores": bool({"preco_compra.ver", "venda.ver", "margem.ver"} & set(u.permissoes))}}
+    tok = os.getenv("OS_N8N_TOKEN", "").strip()
+    cab = {"X-Seven-Token": tok} if tok else {}
     try:
-        resp = httpx.post(url, json=corpo, headers=cab, timeout=float(os.getenv("OS_N8N_TIMEOUT", "12")))
+        resp = httpx.post(url, json=corpo, headers=cab, timeout=float(os.getenv("OS_N8N_TIMEOUT", "50")))
         if resp.status_code != 200:
             return None
-        return validar_escolha(resp.json())
+        dados = resp.json()
     except (httpx.HTTPError, ValueError):
         return None
+    if isinstance(dados, list) and dados:
+        dados = dados[0]
+    texto = dados.get("resposta") or dados.get("output") if isinstance(dados, dict) else None
+    if not isinstance(texto, str) or not texto.strip():
+        return None
+    return texto.strip()[:6000]
+
+
+def _par_ferramenta(f: Ferramenta) -> Optional[tuple]:
+    par = {}
+    if f.termo:
+        par["termo"] = f.termo
+    if f.ate:
+        par["ate"] = f.ate
+    sf = f.sem_fornecedor
+    if isinstance(sf, str):
+        sf = sf.strip().lower() in ("true", "1", "sim", "yes")
+    if isinstance(sf, bool):
+        par["sem_fornecedor"] = sf
+    return validar_escolha({"consulta": f.consulta, "parametros": par})
+
+
+def _para_agente(resp: dict) -> dict:
+    """Resultado em formato simples para o modelo ler."""
+    t = resp.get("tabela") or {}
+    linhas = [[x.isoformat() if hasattr(x, "isoformat") else x for x in l] for l in (t.get("linhas") or [])]
+    return {"resumo": resp.get("texto"), "colunas": t.get("colunas") or [], "linhas": linhas}
 
 
 def _produtos(conn, termo, limite=5):
@@ -219,24 +275,67 @@ def rotas_assistente() -> APIRouter:
     r = APIRouter(prefix="/os/assistente")
 
     @r.post("")
-    def perguntar(body: Pergunta, u: UsuarioOS = Depends(exigir("fila.ver"))):
+    def perguntar(body: Pergunta, request: Request, u: UsuarioOS = Depends(exigir("fila.ver"))):
         texto = body.pergunta.strip()
         if not 2 <= len(texto) <= 500:
             raise HTTPException(status_code=400, detail="Escreva uma pergunta de ate 500 caracteres.")
-        escolhido = escolher_consulta_ia(texto)
-        consulta, par = escolhido or escolher_consulta(texto)
+        # 1) conversa, historico e sessao do agente. A conexao e devolvida antes de chamar o n8n, porque o agente
+        #    chama a ferramenta desta mesma API enquanto esperamos.
+        token = secrets.token_urlsafe(32)
         with db.conexao() as conn:
             conversa = body.conversa_id
             if conversa and not um(conn, "select 1 x from conversas where id = %s and user_id = %s", (conversa, u.id)):
                 raise HTTPException(status_code=404, detail="Conversa nao encontrada.")
             if not conversa:
                 conversa = conn.execute("insert into conversas (user_id, titulo) values (%s, %s) returning id", (u.id, texto[:80])).fetchone()[0]
-            resp = executar(conn, u, consulta, par)
+            historico = list(reversed(lista(conn, "select papel, texto from mensagens where conversa_id = %s order by id desc limit 12", (conversa,))))
+            conn.execute("delete from assistente_sessoes where expira_em < now() - interval '1 day'")
+            conn.execute("insert into assistente_sessoes (token_hash, user_id, conversa_id, expira_em) values (%s, %s, %s, now() + make_interval(mins => %s))",
+                         (_hash(token), u.id, conversa, SESSAO_MINUTOS))
+        # 2) agente (n8n). Sem resposta valida, regras.
+        resposta_ia = chamar_agente(texto, historico, token, _url_publica(request), u)
+        # 3) tabela e link: refaz aqui a ultima consulta que o agente usou, para a tela mostrar os dados do sistema.
+        with db.conexao() as conn:
+            sess = um(conn, "update assistente_sessoes set expira_em = now() where token_hash = %s returning ultima_consulta, ultimos_parametros", (_hash(token),))
+            if resposta_ia:
+                consulta = sess and sess["ultima_consulta"]
+                par = (sess and sess["ultimos_parametros"]) or {}
+                base = executar(conn, u, consulta, par) if consulta else {"tabela": None, "link": None}
+                resp = {"texto": resposta_ia, "tabela": base.get("tabela"), "link": base.get("link")}
+            else:
+                consulta, par = escolher_consulta(texto)
+                resp = executar(conn, u, consulta, par)
             conn.execute("insert into mensagens (conversa_id, papel, texto) values (%s, 'usuario', %s)", (conversa, texto))
-            # So o texto e guardado; a tabela (que pode ter valores) e remontada pelo sistema a cada consulta.
             conn.execute("insert into mensagens (conversa_id, papel, texto, consulta_usada, parametros) values (%s, 'assistente', %s, %s, %s)",
                          (conversa, resp["texto"], consulta, Jsonb(par)))
-        return {"conversa_id": conversa, "consulta": consulta, "motor": "ia" if escolhido else "regras", **resp}
+        return {"conversa_id": conversa, "consulta": consulta, "motor": "ia" if resposta_ia else "regras", **resp}
+
+    @r.post("/ferramenta")
+    def ferramenta(body: Ferramenta, x_assistente_token: str = Header(default="")):
+        """Chamada pelo agente do n8n. So leitura, so a lista fechada, com o perfil de quem perguntou."""
+        if not x_assistente_token:
+            raise HTTPException(status_code=401, detail="Sessao do assistente ausente.")
+        with db.conexao() as conn:
+            sess = um(conn, """update assistente_sessoes set chamadas = chamadas + 1
+                               where token_hash = %s and expira_em > now() and chamadas < %s returning user_id""",
+                      (_hash(x_assistente_token), SESSAO_MAX_CHAMADAS))
+            if not sess:
+                raise HTTPException(status_code=401, detail="Sessao do assistente invalida ou expirada.")
+            dados = carregar_usuario_os(str(sess["user_id"]))
+            if dados is None:
+                raise HTTPException(status_code=403, detail="Usuario sem acesso.")
+            u = UsuarioOS(id=str(sess["user_id"]), email=dados["email"], nome=dados["nome"], perfil=dados["perfil"],
+                          permissoes=permissoes_do_perfil(dados["perfil"]), contas=dados["contas"])
+            if "fila.ver" not in u.permissoes:
+                raise HTTPException(status_code=403, detail="Usuario sem acesso.")
+            escolha = _par_ferramenta(body)
+            if not escolha:
+                return {"erro": "Consulta ou parametros invalidos. Use uma das consultas: " + ", ".join(CONSULTAS)
+                        + ". historico_produto, fornecedores_produto e buscar_produto exigem termo; itens_por_prazo exige ate (AAAA-MM-DD)."}
+            consulta, par = escolha
+            conn.execute("update assistente_sessoes set ultima_consulta = %s, ultimos_parametros = %s where token_hash = %s",
+                         (consulta, Jsonb(par), _hash(x_assistente_token)))
+            return _para_agente(executar(conn, u, consulta, par))
 
     @r.get("/conversas")
     def conversas(u: UsuarioOS = Depends(exigir("fila.ver"))):
