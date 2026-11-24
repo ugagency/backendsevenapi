@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import VERSAO, db
 from .acesso import UsuarioOS, limpar_cache_os, usuario_os
 from .admin import rotas_admin
-from .assistente import rotas_assistente
+from .assistente import rotas_assistente, rotas_ferramenta_agente
 from .captura import rotas_captura
 from .cotacao import rotas_cotacao
 from .fila import rotas_fila
@@ -75,6 +75,7 @@ def criar_app(cfg: Config = None, iniciar_banco: bool = True) -> FastAPI:
                 "permissoes": sorted(u.permissoes), "contas": list(u.contas_detalhe)}
 
     app.include_router(publico)
+    app.include_router(rotas_ferramenta_agente())  # protegida pelo codigo de sessao do agente, nao pelo login
     app.include_router(protegido)
     for rotas in (rotas_admin, rotas_fila, rotas_produtos, rotas_fornecedores, rotas_cotacao, rotas_captura,
                   rotas_painel, rotas_assistente, rotas_relatorios):

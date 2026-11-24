@@ -315,7 +315,27 @@ def rotas_assistente() -> APIRouter:
                          (conversa, resp["texto"], consulta, Jsonb(par)))
         return {"conversa_id": conversa, "consulta": consulta, "motor": "ia" if resposta_ia else "regras", **resp}
 
-    @r.post("/ferramenta")
+    @r.get("/conversas")
+    def conversas(u: UsuarioOS = Depends(exigir("fila.ver"))):
+        with db.conexao() as conn:
+            return lista(conn, "select id, titulo, criada_em from conversas where user_id = %s order by id desc limit 30", (u.id,))
+
+    @r.get("/conversas/{cid}")
+    def conversa(cid: int, u: UsuarioOS = Depends(exigir("fila.ver"))):
+        with db.conexao() as conn:
+            if not um(conn, "select 1 x from conversas where id = %s and user_id = %s", (cid, u.id)):
+                raise HTTPException(status_code=404, detail="Conversa nao encontrada.")
+            return lista(conn, "select papel, texto, consulta_usada, criada_em from mensagens where conversa_id = %s order by id", (cid,))
+
+    return r
+
+
+def rotas_ferramenta_agente() -> APIRouter:
+    """Rota chamada pelo agente do n8n. Nao usa o login do usuario (o n8n nao tem): vale o codigo de sessao curto,
+    criado pela API a cada pergunta de um usuario logado."""
+    f = APIRouter(prefix="/os/assistente")
+
+    @f.post("/ferramenta")
     def ferramenta(body: Ferramenta, x_assistente_token: str = Header(default="")):
         """Chamada pelo agente do n8n. So leitura, so a lista fechada, com o perfil de quem perguntou."""
         if not x_assistente_token:
@@ -342,16 +362,4 @@ def rotas_assistente() -> APIRouter:
                          (consulta, Jsonb(par), _hash(x_assistente_token)))
             return _para_agente(executar(conn, u, consulta, par))
 
-    @r.get("/conversas")
-    def conversas(u: UsuarioOS = Depends(exigir("fila.ver"))):
-        with db.conexao() as conn:
-            return lista(conn, "select id, titulo, criada_em from conversas where user_id = %s order by id desc limit 30", (u.id,))
-
-    @r.get("/conversas/{cid}")
-    def conversa(cid: int, u: UsuarioOS = Depends(exigir("fila.ver"))):
-        with db.conexao() as conn:
-            if not um(conn, "select 1 x from conversas where id = %s and user_id = %s", (cid, u.id)):
-                raise HTTPException(status_code=404, detail="Conversa nao encontrada.")
-            return lista(conn, "select papel, texto, consulta_usada, criada_em from mensagens where conversa_id = %s order by id", (cid,))
-
-    return r
+    return f

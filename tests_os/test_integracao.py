@@ -250,7 +250,7 @@ def test_10b_agente_le_pela_ferramenta_com_o_perfil(como, monkeypatch):
     visto = {}
 
     def n8n_falso(url, json=None, headers=None, timeout=None):
-        cab = {"X-Assistente-Token": json["token"]}
+        cab = {"X-Assistente-Token": json["token"], "Authorization": ""}  # o n8n nao tem o login do usuario
         r = app_cli.post("/os/assistente/ferramenta", json={"consulta": "historico_produto", "termo": "13900001"}, headers=cab)
         visto["dados"] = r.json()
         visto["invalida"] = app_cli.post("/os/assistente/ferramenta", json={"consulta": "drop", "termo": "x"}, headers=cab).json()
