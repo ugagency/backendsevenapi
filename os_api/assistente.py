@@ -56,6 +56,8 @@ def escolher_consulta(pergunta: str, hoje: Optional[date] = None):
     """Devolve (consulta, parametros). Lista fechada; nunca gera SQL."""
     hoje = hoje or date.today()
     t = _sem_acento(pergunta)
+    if re.fullmatch(r"\W*(oi|ola|bom dia|boa tarde|boa noite|e ai|opa|tudo bem|obrigad[oa]|valeu)\W*(tudo bem\W*)?", t):
+        return "saudacao", {}
     if re.search(r"\bmarcas?\b.*\bsem fornecedor", t):
         return "marcas_sem_fornecedor", {}
     if re.search(r"encerra|vence|prazo|fecha", t):
@@ -199,6 +201,9 @@ def _produtos(conn, termo, limite=5):
 def executar(conn, u: UsuarioOS, consulta: str, par: dict):
     """Executa a consulta com a permissao de quem perguntou. Devolve texto, tabela e link."""
     contas = list(u.contas)
+    if consulta == "saudacao":
+        return {"texto": "Oi! Posso consultar peças, histórico de cotações, fornecedores, itens por prazo, marcas sem fornecedor e indicadores. "
+                         "Exemplo: \"o que encerra até sexta sem fornecedor?\"", "tabela": None, "link": None}
     if consulta in ("historico_produto", "fornecedores_produto", "buscar_produto"):
         prods = _produtos(conn, par.get("termo"))
         if not prods:
