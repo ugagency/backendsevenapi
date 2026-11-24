@@ -116,7 +116,8 @@ def escolher_consulta_ia(pergunta: str, hoje: Optional[date] = None) -> Optional
     if not url:
         return None
     hoje = hoje or date.today()
-    cab = {"X-Seven-Token": os.getenv("OS_N8N_TOKEN", "")}
+    token = os.getenv("OS_N8N_TOKEN", "").strip()
+    cab = {"X-Seven-Token": token} if token else {}
     corpo = {"pergunta": pergunta, "hoje": hoje.isoformat(), "dia_da_semana": hoje.strftime("%A"), "consultas": list(CONSULTAS)}
     try:
         resp = httpx.post(url, json=corpo, headers=cab, timeout=float(os.getenv("OS_N8N_TIMEOUT", "12")))

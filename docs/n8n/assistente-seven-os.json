@@ -4,8 +4,7 @@
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "seven-os-assistente",
-        "authentication": "headerAuth",
+        "path": "seven-os-LBIGW_GnA-BxIBeIpUGkl6lJTldbr6-l",
         "responseMode": "responseNode",
         "options": {}
       },

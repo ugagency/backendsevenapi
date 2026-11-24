@@ -44,6 +44,19 @@ def test_ia_manda_so_pergunta_e_data(monkeypatch):
     assert visto["headers"]["X-Seven-Token"] == "segredo-teste"
 
 
+def test_ia_sem_token_nao_manda_cabecalho(monkeypatch):
+    monkeypatch.setenv("OS_N8N_ASSISTENTE_URL", "https://n8n.exemplo/webhook/x")
+    monkeypatch.delenv("OS_N8N_TOKEN", raising=False)
+    visto = {}
+
+    def falso(url, json=None, headers=None, timeout=None):
+        visto["headers"] = headers
+        return _Resp(200, {"consulta": "indicadores", "parametros": {}})
+    monkeypatch.setattr(a.httpx, "post", falso)
+    assert a.escolher_consulta_ia("indicadores") == ("indicadores", {})
+    assert visto["headers"] == {}
+
+
 def test_ia_com_falha_volta_para_regras(monkeypatch):
     monkeypatch.setenv("OS_N8N_ASSISTENTE_URL", "https://n8n.exemplo/webhook/x")
     for falha in (lambda *a, **k: (_ for _ in ()).throw(httpx.ConnectTimeout("t")), lambda *a, **k: _Resp(500, {}),
