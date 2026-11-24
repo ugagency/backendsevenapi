@@ -33,6 +33,8 @@ def criar_app(cfg: Config = None, iniciar_banco: bool = True) -> FastAPI:
         db.encerrar()
 
     app = FastAPI(title="Seven OS API", version=VERSAO, lifespan=ciclo)
+    if iniciar_banco:
+        db.configurar(cfg)
     app.state.cfg = cfg
     app.add_middleware(
         CORSMiddleware,

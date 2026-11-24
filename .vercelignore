@@ -1,0 +1,18 @@
+# Na Vercel vai so o os_api (pasta api/ + os_api/). O robo e o resto ficam de fora.
+/main_api.py
+/sevenmaisdeum.py
+/coupa_*.py
+/credenciais.py
+/rodar_os_api.py
+/requirements.txt
+/Dockerfile
+/tests
+/tests_os
+/docs
+/migrations
+/infra
+/supabase
+/saida_teste
+*.env
+.env.os
+venv

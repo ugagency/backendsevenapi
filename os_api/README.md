@@ -43,3 +43,17 @@ administrador ativo do Seven OS no schema informado antes de criar qualquer cois
 - O link nunca e gravado na auditoria nem no banco.
 
 Publicar a funcao: `supabase functions deploy os-convidar --project-ref hwiyzclxtvggdhrxbsmc` (ou pelo MCP do Supabase).
+
+
+## Hospedagem na Vercel (decisao de 24/11/2026)
+
+O os_api roda na Vercel como funcao Python; o robo continua na VPS.
+- Entrada: `api/index.py`; dependencias: `api/requirements.txt`; configuracao: `vercel.json` (regiao `cle1`, Ohio, a mesma do banco).
+- `.vercelignore` deixa de fora o robo e todo o resto: so vao `api/` e `os_api/`.
+- O pool do banco abre na primeira consulta (a Vercel pode nao rodar o lifespan). Usar `OS_POOL_MIN=0` e `OS_POOL_MAX=2`.
+- Projeto Vercel separado (ex.: `seven-os-api`), importando este repositorio. Antes do merge, a Production Branch do
+  projeto e `seven-os`; depois do merge, volta para `main`.
+- Variaveis: `OS_DATABASE_URL`, `OS_SCHEMA`, `SUPABASE_URL`, `SUPABASE_KEY`, `OS_CORS_ORIGINS`, `OS_CORS_REGEX`,
+  `OS_CONVITE_REDIRECT`, `OS_POOL_MIN`, `OS_POOL_MAX`. Nunca `SUPABASE_SECRET_KEY`.
+- Limites conhecidos: primeiro pedido depois de um tempo parado e mais lento (a funcao "acorda"); caches em memoria
+  valem so dentro de cada instancia.

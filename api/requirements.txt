@@ -1,0 +1,5 @@
+fastapi
+httpx
+PyJWT[crypto]
+psycopg[binary,pool]
+openpyxl
