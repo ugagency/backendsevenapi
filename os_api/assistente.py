@@ -2,14 +2,18 @@
 
 O roteador escolhe UMA consulta da lista; quem executa e o os_api, com a permissao de quem perguntou.
 Valores (preco, margem) so aparecem na tabela montada pelo sistema e nunca entram em texto enviado a um modelo.
-Nesta versao a escolha da consulta e feita por regras, sem modelo de IA: nenhuma pergunta sai do servidor.
-O ponto de troca para um modelo (OpenRouter) e a funcao `escolher_consulta`, que recebe so a pergunta.
+A escolha da consulta e feita por um modelo de IA (OpenRouter, via workflow do n8n) quando OS_N8N_ASSISTENTE_URL esta
+configurada; o que sai do servidor e SO o texto da pergunta e a data de hoje, sem historico, sem preco e sem dado da Seven.
+O retorno do modelo e validado contra a lista fechada (consulta e parametros permitidos). Sem URL, com erro ou com resposta
+invalida, cai nas regras de `escolher_consulta`, que nao dependem de nada externo.
 """
+import os
 import re
 import unicodedata
 from datetime import date, timedelta
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from psycopg.types.json import Jsonb
@@ -76,6 +80,51 @@ def escolher_consulta(pergunta: str, hoje: Optional[date] = None):
     if re.search(r"cotamos|cotou|cotacao|quanto|preco|historico", t):
         return "historico_produto", {"termo": termo}
     return "buscar_produto", {"termo": termo}
+
+
+def validar_escolha(dados) -> Optional[tuple]:
+    """Aceita so uma consulta da lista fechada e parametros conhecidos. Qualquer outra coisa e descartada (devolve None)."""
+    if not isinstance(dados, dict) or dados.get("consulta") not in CONSULTAS:
+        return None
+    bruto = dados.get("parametros") or {}
+    if not isinstance(bruto, dict):
+        return None
+    par = {}
+    termo = bruto.get("termo")
+    if isinstance(termo, str) and termo.strip():
+        par["termo"] = termo.strip()[:120]
+    ate = bruto.get("ate")
+    if isinstance(ate, str):
+        try:
+            par["ate"] = date.fromisoformat(ate[:10]).isoformat()
+        except ValueError:
+            pass
+    if isinstance(bruto.get("sem_fornecedor"), bool):
+        par["sem_fornecedor"] = bruto["sem_fornecedor"]
+    consulta = dados["consulta"]
+    if consulta == "itens_por_prazo" and "ate" not in par:
+        return None
+    if consulta in ("historico_produto", "fornecedores_produto", "buscar_produto") and "termo" not in par:
+        return None
+    return consulta, par
+
+
+def escolher_consulta_ia(pergunta: str, hoje: Optional[date] = None) -> Optional[tuple]:
+    """Pede a um modelo (workflow do n8n -> OpenRouter) para escolher a consulta. Manda so a pergunta e a data.
+    Devolve (consulta, parametros) ou None para usar as regras."""
+    url = os.getenv("OS_N8N_ASSISTENTE_URL", "").strip()
+    if not url:
+        return None
+    hoje = hoje or date.today()
+    cab = {"X-Seven-Token": os.getenv("OS_N8N_TOKEN", "")}
+    corpo = {"pergunta": pergunta, "hoje": hoje.isoformat(), "dia_da_semana": hoje.strftime("%A"), "consultas": list(CONSULTAS)}
+    try:
+        resp = httpx.post(url, json=corpo, headers=cab, timeout=float(os.getenv("OS_N8N_TIMEOUT", "12")))
+        if resp.status_code != 200:
+            return None
+        return validar_escolha(resp.json())
+    except (httpx.HTTPError, ValueError):
+        return None
 
 
 def _produtos(conn, termo, limite=5):
@@ -173,7 +222,8 @@ def rotas_assistente() -> APIRouter:
         texto = body.pergunta.strip()
         if not 2 <= len(texto) <= 500:
             raise HTTPException(status_code=400, detail="Escreva uma pergunta de ate 500 caracteres.")
-        consulta, par = escolher_consulta(texto)
+        escolhido = escolher_consulta_ia(texto)
+        consulta, par = escolhido or escolher_consulta(texto)
         with db.conexao() as conn:
             conversa = body.conversa_id
             if conversa and not um(conn, "select 1 x from conversas where id = %s and user_id = %s", (conversa, u.id)):
@@ -185,7 +235,7 @@ def rotas_assistente() -> APIRouter:
             # So o texto e guardado; a tabela (que pode ter valores) e remontada pelo sistema a cada consulta.
             conn.execute("insert into mensagens (conversa_id, papel, texto, consulta_usada, parametros) values (%s, 'assistente', %s, %s, %s)",
                          (conversa, resp["texto"], consulta, Jsonb(par)))
-        return {"conversa_id": conversa, "consulta": consulta, **resp}
+        return {"conversa_id": conversa, "consulta": consulta, "motor": "ia" if escolhido else "regras", **resp}
 
     @r.get("/conversas")
     def conversas(u: UsuarioOS = Depends(exigir("fila.ver"))):

@@ -1,0 +1,108 @@
+{
+  "name": "Seven OS - assistente (escolhe a consulta)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "seven-os-assistente",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'openai/gpt-4o-mini', temperature: 0, response_format: { type: 'json_object' }, provider: { data_collection: 'deny' }, messages: [ { role: 'system', content: \"Voce escolhe UMA consulta de uma lista fechada para responder a pergunta de um usuario de compras da Seven Suprimentos. Responda SOMENTE um JSON, sem texto fora dele, no formato {\\\"consulta\\\": \\\"...\\\", \\\"parametros\\\": {...}}.\\\\nConsultas permitidas:\\\\n- historico_produto: pergunta sobre ja ter cotado uma peca ou por quanto. parametros: {\\\"termo\\\": codigo, referencia ou nome da peca}\\\\n- fornecedores_produto: quem fornece a peca. parametros: {\\\"termo\\\": ...}\\\\n- buscar_produto: procurar uma peca. parametros: {\\\"termo\\\": ...}\\\\n- itens_por_prazo: o que encerra ate uma data. parametros: {\\\"ate\\\": \\\"AAAA-MM-DD\\\", \\\"sem_fornecedor\\\": true ou false}. Calcule a data a partir de hoje e do dia da semana informados.\\\\n- marcas_sem_fornecedor: marcas sem fornecedor cadastrado. parametros: {}\\\\n- indicadores: resumo do painel. parametros: {}\\\\nRegras: nunca escreva SQL; nunca invente codigos; se a pergunta nao se encaixar, use buscar_produto com as palavras principais como termo.\" }, { role: 'user', content: 'Hoje: ' + $json.body.hoje + ' (' + $json.body.dia_da_semana + '). Pergunta: ' + $json.body.pergunta } ] }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "name": "OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const txt = $input.first().json.choices?.[0]?.message?.content || '{}';\nlet r = {};\ntry { r = JSON.parse(txt); } catch (e) { r = {}; }\nreturn [{ json: { consulta: r.consulta, parametros: r.parametros || {} } }];"
+      },
+      "name": "Ler resposta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "name": "Responder",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "OpenRouter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter": {
+      "main": [
+        [
+          {
+            "node": "Ler resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler resposta": {
+      "main": [
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none",
+    "saveManualExecutions": false
+  }
+}
