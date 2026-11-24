@@ -57,3 +57,24 @@ def valores_visiveis(u: UsuarioOS, v: dict) -> dict:
     if pode(u, "margem.ver"):
         saida["margem_pct"] = margem_pct(v.get("preco_compra"), v.get("ipi"), v.get("frete"), v.get("preco_venda"))
     return saida
+
+
+_ULTIMA_SYNC = 0.0
+
+
+def sincronizar_se_preciso():
+    """Traz para o OS o que o robo gravou, sem ninguem clicar. Incremental, protegido por trava no banco e
+    limitado a uma vez por OS_SYNC_AUTO_SEG segundos (padrao 60; 0 desliga). Nunca derruba a tela que pediu."""
+    import os
+    import time
+    global _ULTIMA_SYNC
+    from . import db
+    intervalo = float(os.getenv("OS_SYNC_AUTO_SEG", "60"))
+    if intervalo <= 0 or time.monotonic() - _ULTIMA_SYNC < intervalo:
+        return
+    _ULTIMA_SYNC = time.monotonic()
+    try:
+        with db.conexao() as conn:
+            conn.execute("select sincronizar(null)").fetchone()
+    except Exception:  # a leitura da tela segue com o que ja esta no OS
+        pass

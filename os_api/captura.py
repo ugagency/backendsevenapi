@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from . import db
 from .acesso import UsuarioOS, exigir
 from .auditoria import auditar
-from .comum import lista, num, origem, um
+from .comum import lista, num, origem, sincronizar_se_preciso, um
 
 CABECALHO = ["Numero do evento", "Titulo", "UF(VALE)", "DATA", "DESCRIÇÃO", "QTDE", "UNID. MED", "pagina de descrição", "Marca"]
 
@@ -29,6 +29,7 @@ def rotas_captura() -> APIRouter:
     @r.get("/dias")
     def dias(u: UsuarioOS = Depends(exigir("fila.ver"))):
         """Dias capturados, por conta. O dia e o escolhido para a captura (data_inicio); linhas antigas sem ele caem no dia em que foram gravadas."""
+        sincronizar_se_preciso()
         with db.conexao() as conn:
             rows = lista(conn, """select coalesce(l.data_inicio, (l.capturado_em at time zone 'America/Sao_Paulo')::date) dia, l.conta_id, c.nome conta,
                                   count(*) linhas, count(distinct l.numero_evento) eventos

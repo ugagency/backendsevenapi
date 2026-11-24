@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from . import db
 from .acesso import UsuarioOS, exigir
 from .auditoria import auditar
-from .comum import exigir_conta, lista, num, origem, pode, um, valores_visiveis
+from .comum import exigir_conta, lista, num, origem, pode, sincronizar_se_preciso, um, valores_visiveis
 
 ABAS = ("pronto", "falta_fornecedor", "produto_novo", "conferencia")
 ORDENS = {
@@ -136,6 +136,7 @@ def rotas_fila() -> APIRouter:
 
     @r.get("/fila/cartoes")
     def cartoes(u: UsuarioOS = Depends(exigir("fila.ver"))):
+        sincronizar_se_preciso()
         where, par = _filtros(u, None, None, None, None, None, "abertos", None, None)
         with db.conexao() as conn:
             c = um(conn, _consulta(where) + """
