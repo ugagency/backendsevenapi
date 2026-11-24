@@ -263,6 +263,24 @@ def test_11_captura_planilha_e_sincronizacao(como):
     assert c.post("/os/captura/rodar", json={}).status_code == 503
 
 
+def test_11b_captura_mostra_o_dia_escolhido_e_nao_o_dia_da_gravacao(como):
+    """O robo grava em outro dia (capturado_em), mas a tela mostra o dia pedido para a captura (data_inicio)."""
+    adm = URL.replace("os_app@", "postgres@")
+    with psycopg.connect(adm) as conn:
+        alvo = conn.execute("select id from os_homolog.linhas_evento where data_inicio is null and conta_id = 1 order by id limit 1").fetchone()[0]
+        conn.execute("update os_homolog.linhas_evento set data_inicio = date '2026-11-20' where id = %s", (alvo,))
+        conn.commit()
+    try:
+        c = como("cotacao")
+        dias = [d["dia"] for d in c.get("/os/captura/dias").json()["dias"]]
+        assert "2026-11-20" in dias
+        assert c.get("/os/captura/planilha", params={"data": "2026-11-20", "conta": 1}).status_code == 200
+    finally:
+        with psycopg.connect(adm) as conn:
+            conn.execute("update os_homolog.linhas_evento set data_inicio = null where id = %s", (alvo,))
+            conn.commit()
+
+
 def test_12_auditoria_e_exportacoes(como):
     assert como("cotacao").get("/os/auditoria").status_code == 403
     sup = como("suporte").get("/os/auditoria", params={"entidade": "cotacao"}).json()["registros"]

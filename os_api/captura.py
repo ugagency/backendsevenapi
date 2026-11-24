@@ -28,12 +28,12 @@ def rotas_captura() -> APIRouter:
 
     @r.get("/dias")
     def dias(u: UsuarioOS = Depends(exigir("fila.ver"))):
-        """Dias com captura, por conta, para o download por data."""
+        """Dias capturados, por conta. O dia e o escolhido para a captura (data_inicio); linhas antigas sem ele caem no dia em que foram gravadas."""
         with db.conexao() as conn:
-            rows = lista(conn, """select (l.capturado_em at time zone 'America/Sao_Paulo')::date dia, l.conta_id, c.nome conta,
+            rows = lista(conn, """select coalesce(l.data_inicio, (l.capturado_em at time zone 'America/Sao_Paulo')::date) dia, l.conta_id, c.nome conta,
                                   count(*) linhas, count(distinct l.numero_evento) eventos
                                   from linhas_evento l join contas_portal c on c.id = l.conta_id
-                                  where l.conta_id = any(%s) and l.capturado_em >= now() - interval '60 days'
+                                  where l.conta_id = any(%s) and coalesce(l.data_inicio, (l.capturado_em at time zone 'America/Sao_Paulo')::date) >= (now() at time zone 'America/Sao_Paulo')::date - 60
                                   group by 1, 2, 3 order by 1 desc, 2""", (list(u.contas),))
             ultima = um(conn, "select max(capturado_em) em from linhas_evento where conta_id = any(%s)", (list(u.contas),))
         return {"dias": rows, "ultima_captura": ultima["em"]}
@@ -74,7 +74,7 @@ def rotas_captura() -> APIRouter:
                 select l.numero_evento, l.codigo, l.uf, l.prazo_texto, l.descricao, l.quantidade_texto, l.quantidade, l.unidade, l.link_evento, l.marca,
                        l.conta_id, c.nome conta
                 from linhas_evento l join contas_portal c on c.id = l.conta_id
-                where l.conta_id = any(%s) and (l.capturado_em at time zone 'America/Sao_Paulo')::date = %s
+                where l.conta_id = any(%s) and coalesce(l.data_inicio, (l.capturado_em at time zone 'America/Sao_Paulo')::date) = %s
                 order by l.numero_evento, l.codigo, l.numero_linha, l.conta_id""", (contas, data))
             if not rows:
                 raise HTTPException(status_code=404, detail="Sem captura nessa data para as contas escolhidas.")
