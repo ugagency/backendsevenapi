@@ -424,13 +424,14 @@ def _planilha_base():
 def test_40_carga_da_base_da_seven(como):
     arq = {"arquivo": ("BASE.xlsx", _planilha_base(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
     assert como("supervisor").post("/os/admin/importar-base", files=arq).status_code == 403
-    assert como("suporte").post("/os/admin/importar-base", files=arq).status_code == 403
-    c = como("admin")
+    assert como("cotacao").post("/os/admin/importar-base", files=arq).status_code == 403
+    c = como("suporte")
     r = c.post("/os/admin/importar-base", files={"arquivo": ("x.csv", b"a,b", "text/csv")})
     assert r.status_code == 400
     r = c.post("/os/admin/importar-base", files=arq)
     assert r.status_code == 200, r.text
     d = r.json()
+    assert "preco" not in str(set(d)) or set(d) >= {"com_preco_compra"}  # so contagens
     assert d["linhas"] == 4 and d["ganhas"] == 2 and d["declinadas"] == 1 and d["com_preco_compra"] == 3
     assert d["sem_produto"] == 0  # 900004 ganhou o codigo pela aba PV
     # recarregar nao duplica

@@ -296,9 +296,10 @@ def rotas_admin() -> APIRouter:
 
     @r.post("/importar-base")
     def importar_base(arquivo: UploadFile = File(...), u: UsuarioOS = Depends(exigir("admin.parametros"))):
-        """Carga da base historica da Seven (BASE.xlsx). So o Administrador. Recarregar o mesmo arquivo nao duplica."""
-        if u.perfil != "administrador":
-            raise HTTPException(status_code=403, detail="So o Administrador carrega a base da Seven.")
+        """Carga da base historica da Seven (BASE.xlsx). Administrador ou Suporte SSYS (a resposta so traz contagens,
+        nenhum preco). Recarregar o mesmo arquivo nao duplica."""
+        if u.perfil not in ("administrador", "suporte"):
+            raise HTTPException(status_code=403, detail="So o Administrador ou o Suporte SSYS carrega a base da Seven.")
         nome = (arquivo.filename or "base.xlsx").split("/")[-1].split("\\")[-1]
         if not nome.lower().endswith((".xlsx", ".xlsm")):
             raise HTTPException(status_code=400, detail="Envie a planilha em Excel (.xlsx).")
