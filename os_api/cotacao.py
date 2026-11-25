@@ -196,7 +196,8 @@ def rotas_cotacao() -> APIRouter:
                               registrado_por = excluded.registrado_por, registrado_em = now()""",
                          (item_id, c and c["id"], body.resultado, (body.pedido_venda or "").strip() or None, u.id))
             conn.execute("update itens set andamento = %s, atualizado_em = now() where id = %s", (body.resultado, item_id))
-            conn.execute("insert into item_andamento (item_id, de, para, por) values (%s, %s, %s, %s)", (item_id, it["andamento"], body.resultado, u.id))
+            if it["andamento"] != body.resultado:  # corrigir so o numero do pedido nao e mudanca de andamento
+                conn.execute("insert into item_andamento (item_id, de, para, por) values (%s, %s, %s, %s)", (item_id, it["andamento"], body.resultado, u.id))
             auditar(conn, origem=origem(u), entidade="item", entidade_id=item_id, acao="alterar", user_id=u.id,
                     antes={"andamento": it["andamento"]}, depois={"andamento": body.resultado, "pedido_venda": body.pedido_venda})
         return {"id": item_id, "andamento": body.resultado}

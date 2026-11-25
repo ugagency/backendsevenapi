@@ -221,7 +221,7 @@ def rotas_fornecedores() -> APIRouter:
                     join itens i on i.id = c.item_id where c.fornecedor_id = f.id and i.produto_id = %s and cv.preco_compra is not null
                     and c.situacao <> 'substituida'
                     union all
-                    select h.preco_compra, h.data_ref::timestamptz from historico_importado h
+                    select h.preco_compra, h.data_ref::timestamp at time zone 'America/Sao_Paulo' from historico_importado h
                     where h.produto_id = %s and h.preco_compra > 0
                       and upper(f.nome) = any(regexp_split_to_array(upper(coalesce(h.fornecedor_texto, '')), '\s*/\s*|\s+E\s+|\s*\+\s*'))
                   ) x order by criada_em desc nulls last limit 1) up on true

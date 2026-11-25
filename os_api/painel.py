@@ -57,13 +57,18 @@ def calcular_painel(conn, u: UsuarioOS, dias: int, conta: Optional[int]):
                 "link": "/os?situacao=todos&andamento=declinada", "disponivel": bool(dec["total"])})
 
     if pode(u, "valor_aberto.ver"):
-        v = um(conn, f"""select sum(i.quantidade_total * uv.preco_venda) valor, count(*) filter (where uv.preco_venda is not null) com, count(*) total
+        # mesma regra da fila: ultima venda no Seven OS ou, sem ela, na base historica da Seven
+        v = um(conn, f"""select sum(i.quantidade_total * coalesce(uv.preco_venda, hv.preco_venda)) valor,
+                                count(*) filter (where coalesce(uv.preco_venda, hv.preco_venda) is not null) com, count(*) total
                          from itens i left join lateral (
                            select cv.preco_venda from cotacoes c join cotacao_valores cv on cv.cotacao_id = c.id join itens ix on ix.id = c.item_id
                            where ix.produto_id = i.produto_id and cv.preco_venda is not null and c.situacao <> 'substituida'
-                           order by c.criada_em desc limit 1) uv on true where {ab}""", p)
+                           order by c.criada_em desc limit 1) uv on true
+                         left join lateral (
+                           select h.preco_venda from historico_importado h where h.produto_id = i.produto_id and h.preco_venda is not null
+                           order by h.data_ref desc nulls last limit 1) hv on true where {ab}""", p)
         ind.append({"chave": "valor_aberto", "titulo": "Valor em aberto", "valor": num(v["valor"]), "unidade": "R$", "restrito": True,
-                    "detalhe": f"{v['com']} de {v['total']} itens abertos têm preço de venda anterior", "link": "/os?ordem=valor",
+                    "detalhe": f"{v['com']} de {v['total']} itens abertos têm preço de venda anterior (Seven OS ou base da Seven)", "link": "/os?ordem=valor",
                     "disponivel": v["com"] > 0, "motivo": None if v["com"] else "Nenhum item aberto tem preço de venda registrado ainda."})
     if pode(u, "margem.ver"):
         m = um(conn, """select count(*) n, avg((cv.preco_venda - (cv.preco_compra * (1 + coalesce(cv.ipi, 0) / 100) + coalesce(cv.frete, 0))) / cv.preco_venda * 100) media

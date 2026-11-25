@@ -246,7 +246,7 @@ def executar(conn, u: UsuarioOS, consulta: str, par: dict):
         link = f"/os/item/{cots[0]['item_id']}" if cots else (f"/os/item/{apar['item']}" if apar["item"] else None)
         base = lista(conn, """select data_ref, linha_original->>'evento' evento, linha_original->>'referencia' ref,
                                  fornecedor_texto, linha_original->>'quantidade' qtd, status, linha_original->>'_pedido_venda' pv,
-                                 preco_compra, ipi, frete, preco_venda from historico_importado
+                                 preco_compra, ipi, frete, preco_venda, margem from historico_importado
                               where produto_id = %s order by data_ref desc nulls last, id desc limit 15""", (p["id"],))
         if not cots and not base:
             return {"texto": f"{p['nome']}: apareceu {apar['n']} vez(es) na captura, mas não há cotação registrada no sistema nem na base da Seven.", "tabela": None, "link": link}
@@ -261,6 +261,8 @@ def executar(conn, u: UsuarioOS, consulta: str, par: dict):
                            c["situacao"], c["resultado"] or ""] + [v.get(k) for k in chaves])
         for h in base:
             v = valores_visiveis(u, h)
+            if "margem_pct" in v:  # na base vale a margem final da planilha da Seven, como na ficha
+                v["margem_pct"] = num(h["margem"])
             linhas.append([h["data_ref"].strftime("%d/%m/%Y") if h["data_ref"] else "", "Base da Seven", h["evento"] or h["ref"] or "",
                            h["fornecedor_texto"] or "", h["qtd"] or "", situacao_base.get(h["status"], h["status"] or ""),
                            f"ganha, PV {h['pv']}" if h["status"] == "ganha" else ""] + [v.get(k) for k in chaves])
