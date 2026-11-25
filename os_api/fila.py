@@ -213,8 +213,11 @@ def rotas_fila() -> APIRouter:
                 left join resultados rs on rs.item_id = i.id
                 where i.produto_id = %s and i.id <> %s and i.contas && %s::bigint[] order by i.capturado_em desc nulls last limit 30""",
                                (pid, item_id, list(u.contas)))
-            importado = lista(conn, """select origem, data_ref, fornecedor_texto, status, preco_compra, ipi, frete, preco_venda
-                                       from historico_importado where produto_id = %s order by data_ref desc nulls last limit 30""", (pid,))
+            importado = lista(conn, """select origem, data_ref, fornecedor_texto, status, preco_compra, ipi, frete, preco_venda, margem,
+                                       linha_original->>'evento' evento, linha_original->>'quantidade' quantidade,
+                                       linha_original->>'_pedido_venda' pedido_venda
+                                       from historico_importado where produto_id = %s
+                                       order by data_ref desc nulls last, preco_compra desc nulls last limit 30""", (pid,))
             declinios = lista(conn, """select d.em, d.motivo, i.numero_evento, coalesce(nullif(us.nome, ''), us.email) por
                                        from declinados d join itens i on i.id = d.item_id left join usuarios us on us.user_id = d.por
                                        where d.produto_id = %s order by d.em desc limit 30""", (pid,))
@@ -236,9 +239,16 @@ def rotas_fila() -> APIRouter:
             a["quantidade_total"] = num(a["quantidade_total"]); a["valores"] = v
         for h in importado:
             v = valores_visiveis(u, h)
-            for k in ("preco_compra", "ipi", "frete", "preco_venda"):
+            if "margem_pct" in v:  # na base vale a margem final da planilha da Seven (ja descontados os impostos)
+                v["margem_final"] = num(h["margem"])
+                v.pop("margem_pct")
+            for k in ("preco_compra", "ipi", "frete", "preco_venda", "margem"):
                 h.pop(k, None)
             h["valores"] = v
+            try:
+                h["quantidade"] = float(h["quantidade"]) if h["quantidade"] not in (None, "") else None
+            except ValueError:
+                h["quantidade"] = None
         for l in linhas:
             l["quantidade"] = num(l["quantidade"])
         item = {k: it[k] for k in ("id", "numero_evento", "prazo", "unidade", "uf", "aba", "andamento", "linhas", "capturado_em",

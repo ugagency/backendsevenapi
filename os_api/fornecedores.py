@@ -211,12 +211,21 @@ def rotas_fornecedores() -> APIRouter:
                 select f.id, f.nome, f.cidade, f.uf, f.contato, f.telefone, f.email, pf.origem, pf.confirmado_em,
                   up.preco_compra ultimo_preco, up.criada_em ultimo_preco_em,
                   (select count(*) from cotacoes c join resultados rs on rs.cotacao_id = c.id join itens i on i.id = c.item_id
-                   where c.fornecedor_id = f.id and i.produto_id = %s and rs.resultado = 'ganha') ganhas
+                   where c.fornecedor_id = f.id and i.produto_id = %s and rs.resultado = 'ganha')
+                  + (select count(*) from historico_importado h where h.produto_id = %s and h.status = 'ganha'
+                     and upper(f.nome) = any(regexp_split_to_array(upper(coalesce(h.fornecedor_texto, '')), '\s*/\s*|\s+E\s+|\s*\+\s*'))) ganhas
                 from produto_fornecedores pf join fornecedores f on f.id = pf.fornecedor_id
-                left join lateral (select cv.preco_compra, c.criada_em from cotacoes c join cotacao_valores cv on cv.cotacao_id = c.id
+                left join lateral (
+                  select * from (
+                    select cv.preco_compra, c.criada_em from cotacoes c join cotacao_valores cv on cv.cotacao_id = c.id
                     join itens i on i.id = c.item_id where c.fornecedor_id = f.id and i.produto_id = %s and cv.preco_compra is not null
-                    and c.situacao <> 'substituida' order by c.criada_em desc limit 1) up on true
-                where pf.produto_id = %s order by f.nome""", (pid, pid, pid))
+                    and c.situacao <> 'substituida'
+                    union all
+                    select h.preco_compra, h.data_ref::timestamptz from historico_importado h
+                    where h.produto_id = %s and h.preco_compra > 0
+                      and upper(f.nome) = any(regexp_split_to_array(upper(coalesce(h.fornecedor_texto, '')), '\s*/\s*|\s+E\s+|\s*\+\s*'))
+                  ) x order by criada_em desc nulls last limit 1) up on true
+                where pf.produto_id = %s order by f.nome""", (pid, pid, pid, pid, pid))
             sug = lista(conn, """
                 select f.id, f.nome, f.cidade, f.uf, 'Atende a marca ' || m.nome as fonte
                 from marcas m join fornecedor_marcas fm on fm.marca_id = m.id join fornecedores f on f.id = fm.fornecedor_id and f.ativo

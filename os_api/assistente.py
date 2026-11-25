@@ -244,8 +244,8 @@ def executar(conn, u: UsuarioOS, consulta: str, par: dict):
                               where i.produto_id = %s and i.contas && %s::bigint[] order by c.criada_em desc limit 10""", (p["id"], contas))
         apar = um(conn, "select count(*) n, max(capturado_em) ultima, min(id) item from itens where produto_id = %s and contas && %s::bigint[]", (p["id"], contas))
         link = f"/os/item/{cots[0]['item_id']}" if cots else (f"/os/item/{apar['item']}" if apar["item"] else None)
-        base = lista(conn, """select data_ref, linha_original->>'NUMERO DO EVENTO' evento, linha_original->>'NUMERO DE REFERENCIA' ref,
-                                 fornecedor_texto, linha_original->>'QUANTIDADE' qtd, status, linha_original->>'_pedido_venda' pv,
+        base = lista(conn, """select data_ref, linha_original->>'evento' evento, linha_original->>'referencia' ref,
+                                 fornecedor_texto, linha_original->>'quantidade' qtd, status, linha_original->>'_pedido_venda' pv,
                                  preco_compra, ipi, frete, preco_venda from historico_importado
                               where produto_id = %s order by data_ref desc nulls last, id desc limit 15""", (p["id"],))
         if not cots and not base:

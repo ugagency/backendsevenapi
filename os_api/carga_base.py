@@ -95,12 +95,15 @@ def ler_planilha(conteudo: bytes) -> tuple:
         base = f"{ref}|{cod or ''}"
         vistos[base] = vistos.get(base, 0) + 1
         compra = _num(d.get("preco_compra"))
+        frete_pct = _num(d.get("frete"))
         venda = _num(d.get("preco_venda"))
         forn = re.sub(r"\s+", " ", str(d.get("fornecedor") or "")).strip()
         linhas.append({
             "chave": f"{base}|{vistos[base]}", "linha": n, "referencia": ref, "codigo": cod,
             "descricao": str(d.get("descricao") or "").strip(), "fornecedor": forn or None,
-            "preco_compra": compra if compra and compra > 0 else None, "ipi": _num(d.get("ipi")), "frete": _num(d.get("frete")),
+            "preco_compra": compra if compra and compra > 0 else None, "ipi": _num(d.get("ipi")),
+            # a planilha traz FRETE GERAL em %; o OS guarda frete em R$ por unidade (como na tela de cotacao)
+            "frete": round(compra * frete_pct / 100, 4) if compra and compra > 0 and frete_pct is not None else (0.0 if frete_pct == 0 else None),
             "margem": _num(d.get("margem")), "preco_venda": venda if venda and venda > 0 else None,
             "declinou": _sem_acento(forn) in ("DECLINAR", "DECLINADO"), "status_planilha": str(d.get("status") or "").strip(),
             "data": _data(d.get("data")),

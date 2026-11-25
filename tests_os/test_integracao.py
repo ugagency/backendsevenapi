@@ -439,6 +439,7 @@ def test_40_carga_da_base_da_seven(como):
     assert d2["substituidas"] == 4 and d2["produtos_novos"] == 0 and d2["fornecedores_novos"] == 0
     with psycopg.connect(URL) as conn:
         q = lambda s, *a: conn.execute(s, a).fetchall()
+        assert q("select frete from os_homolog.historico_importado where codigo = '13900001'")[0][0] == 10  # 10% de R$ 100
         h = q("select codigo, status, preco_compra, linha_original->>'_pedido_venda' from os_homolog.historico_importado where origem = 'base_seven' order by codigo nulls last")
         assert ("13900001", "ganha", 100, "7001") in [(a, b, float(c) if c else None, e) for a, b, c, e in h]
         assert len(h) == 4
@@ -446,4 +447,15 @@ def test_40_carga_da_base_da_seven(como):
         assert {"FORNECEDOR CARGA UM", "BAWEX"} <= nomes and not any("HTTP" in n or "LOJA" in n for n in nomes)
         assert q("select count(*) from os_homolog.produto_codigos where codigo = '13999999'")[0][0] == 1
         assert q("select count(*) from os_homolog.auditoria where entidade = 'historico_importado'")[0][0] >= 2
+        pid = q("select produto_id from os_homolog.produto_codigos where codigo = '13900001'")[0][0]
+        item_id = q("select id from os_homolog.itens where produto_id = %s limit 1", pid)[0][0]
+    # ultimo preco do fornecedor e cotacoes ganhas tambem pela base; ficha mostra evento, quantidade, PV e margem final
+    vinc = {v["nome"]: v for v in como("admin").get(f"/os/produtos/{pid}/fornecedores").json()["vinculados"]}
+    assert vinc["FORNECEDOR CARGA UM"]["ultimo_preco"] == 100 and vinc["FORNECEDOR CARGA UM"]["ganhas"] >= 1
+    base = [h for h in como("admin").get(f"/os/itens/{item_id}").json()["historico_importado"] if h["evento"] == "900001"][0]
+    assert base["pedido_venda"] == "7001" and base["quantidade"] == 2 and base["valores"]["margem_final"] == 9.99
+    assert "margem_pct" not in base["valores"] and base["valores"]["frete"] == 10
+    sup = [h for h in como("suporte").get(f"/os/itens/{item_id}").json()["historico_importado"] if h["evento"] == "900001"][0]
+    assert sup["valores"] == {}  # suporte nao ve valores
+    with psycopg.connect(URL) as conn:
         conn.execute("delete from os_homolog.historico_importado where origem = 'base_seven'")
