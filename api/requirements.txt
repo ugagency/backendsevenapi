@@ -3,3 +3,4 @@ httpx
 PyJWT[crypto]
 psycopg[binary,pool]
 openpyxl
+python-multipart
