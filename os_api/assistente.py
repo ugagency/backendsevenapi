@@ -147,7 +147,7 @@ def chamar_agente(pergunta: str, historico: list, token: str, api_url: str, u: U
     hoje = hoje or date.today()
     corpo = {"pergunta": pergunta, "historico": historico, "hoje": hoje.isoformat(), "dia_da_semana": DIAS_PT[hoje.weekday()],
              "token": token, "api_url": api_url,
-             "usuario": {"nome": (u.nome or "").split(" ")[0], "ve_valores": bool({"preco_compra.ver", "venda.ver", "margem.ver"} & set(u.permissoes))}}
+             "usuario": {"nome": (u.nome or "").split(" ")[0], "ve_valores": "venda.ver" in u.permissoes}}
     tok = os.getenv("OS_N8N_TOKEN", "").strip()
     cab = {"X-Seven-Token": tok} if tok else {}
     try:
@@ -179,11 +179,23 @@ def _par_ferramenta(f: Ferramenta) -> Optional[tuple]:
     return validar_escolha({"consulta": f.consulta, "parametros": par})
 
 
+COLUNAS_FORA_DO_MODELO = {"Compra (un.)", "IPI %", "Frete", "Margem %"}
+
+
 def _para_agente(resp: dict) -> dict:
-    """Resultado em formato simples para o modelo ler."""
+    """Resultado em formato simples para o modelo ler. Preco de compra, IPI, frete e margem nunca vao ao modelo
+    (proposta: o preco de compra nao e compartilhado com terceiros; termo, item 3.1 f). Margem junto com a venda
+    revelaria a compra. Quem pode ver esses valores ve na tabela da tela, que vem do sistema e nao passa pela IA."""
     t = resp.get("tabela") or {}
-    linhas = [[x.isoformat() if hasattr(x, "isoformat") else x for x in l] for l in (t.get("linhas") or [])]
-    return {"resumo": resp.get("texto"), "colunas": t.get("colunas") or [], "linhas": linhas}
+    cols = t.get("colunas") or []
+    manter = [i for i, c in enumerate(cols) if c not in COLUNAS_FORA_DO_MODELO]
+    linhas = [[(l[i].isoformat() if hasattr(l[i], "isoformat") else l[i]) for i in manter if i < len(l)] for l in (t.get("linhas") or [])]
+    retirados = [c for c in cols if c in COLUNAS_FORA_DO_MODELO]
+    saida = {"resumo": resp.get("texto"), "colunas": [cols[i] for i in manter], "linhas": linhas}
+    if retirados:
+        saida["aviso"] = ("Colunas " + ", ".join(retirados) + " existem para este usuario, mas nao sao enviadas a IA. "
+                          "Nao cite nem estime esses valores; diga que estao na tabela abaixo da resposta.")
+    return saida
 
 
 def _produtos(conn, termo, limite=5):
@@ -232,17 +244,28 @@ def executar(conn, u: UsuarioOS, consulta: str, par: dict):
                               where i.produto_id = %s and i.contas && %s::bigint[] order by c.criada_em desc limit 10""", (p["id"], contas))
         apar = um(conn, "select count(*) n, max(capturado_em) ultima, min(id) item from itens where produto_id = %s and contas && %s::bigint[]", (p["id"], contas))
         link = f"/os/item/{cots[0]['item_id']}" if cots else (f"/os/item/{apar['item']}" if apar["item"] else None)
-        if not cots:
-            return {"texto": f"{p['nome']}: apareceu {apar['n']} vez(es) na captura, mas não há cotação registrada no sistema.", "tabela": None, "link": link}
-        colunas = ["Data", "Evento", "Fornecedor", "Quantidade", "Situação", "Resultado"]
+        base = lista(conn, """select data_ref, linha_original->>'NUMERO DO EVENTO' evento, linha_original->>'NUMERO DE REFERENCIA' ref,
+                                 fornecedor_texto, linha_original->>'QUANTIDADE' qtd, status, linha_original->>'_pedido_venda' pv,
+                                 preco_compra, ipi, frete, preco_venda from historico_importado
+                              where produto_id = %s order by data_ref desc nulls last, id desc limit 15""", (p["id"],))
+        if not cots and not base:
+            return {"texto": f"{p['nome']}: apareceu {apar['n']} vez(es) na captura, mas não há cotação registrada no sistema nem na base da Seven.", "tabela": None, "link": link}
+        colunas = ["Data", "Origem", "Evento", "Fornecedor", "Quantidade", "Situação", "Resultado"]
         chaves = [k for k in ("preco_compra", "ipi", "frete", "preco_venda", "margem_pct") if k in valores_visiveis(u, {})]
         nomes = {"preco_compra": "Compra (un.)", "ipi": "IPI %", "frete": "Frete", "preco_venda": "Venda (un.)", "margem_pct": "Margem %"}
+        situacao_base = {"ganha": "Cotada", "cotada": "Cotada", "declinada": "Declinada", "sem_preco": "Sem preço"}
         linhas = []
         for c in cots:
             v = valores_visiveis(u, c)
-            linhas.append([c["criada_em"].strftime("%d/%m/%Y"), c["numero_evento"], c["fornecedor"] or "", num(c["quantidade_total"]),
+            linhas.append([c["criada_em"].strftime("%d/%m/%Y"), "Seven OS", c["numero_evento"], c["fornecedor"] or "", num(c["quantidade_total"]),
                            c["situacao"], c["resultado"] or ""] + [v.get(k) for k in chaves])
-        return {"texto": f"{p['nome']}: {len(cots)} cotação(ões) registrada(s). Os valores abaixo vêm direto do sistema.",
+        for h in base:
+            v = valores_visiveis(u, h)
+            linhas.append([h["data_ref"].strftime("%d/%m/%Y") if h["data_ref"] else "", "Base da Seven", h["evento"] or h["ref"] or "",
+                           h["fornecedor_texto"] or "", h["qtd"] or "", situacao_base.get(h["status"], h["status"] or ""),
+                           f"ganha, PV {h['pv']}" if h["status"] == "ganha" else ""] + [v.get(k) for k in chaves])
+        partes = ([f"{len(cots)} cotação(ões) no Seven OS"] if cots else []) + ([f"{len(base)} registro(s) na base da Seven"] if base else [])
+        return {"texto": f"{p['nome']}: " + " e ".join(partes) + ". Os valores abaixo vêm direto do sistema.",
                 "tabela": {"colunas": colunas + [nomes[k] for k in chaves], "linhas": linhas}, "link": link}
     if consulta == "itens_por_prazo":
         sem = "and not exists (select 1 from produto_fornecedores pf where pf.produto_id = i.produto_id)" if par.get("sem_fornecedor") else ""

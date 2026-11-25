@@ -275,7 +275,9 @@ def test_10b_agente_le_pela_ferramenta_com_o_perfil(como, monkeypatch):
 
     app_cli = como("admin")
     r2 = app_cli.post("/os/assistente", json={"pergunta": "ja cotamos 13900001?"}).json()
-    assert "Margem %" in visto["dados"]["colunas"] and "Margem %" in r2["tabela"]["colunas"]
+    # a tela do admin mostra margem e compra; a IA nunca recebe (proposta e termo 3.1 f)
+    assert "Margem %" in r2["tabela"]["colunas"] and "Compra (un.)" in r2["tabela"]["colunas"]
+    assert not ({"Compra (un.)", "IPI %", "Frete", "Margem %"} & set(visto["dados"]["colunas"])) and "aviso" in visto["dados"]
 
 def test_11_captura_planilha_e_sincronizacao(como):
     c = como("cotacao")
@@ -394,3 +396,53 @@ def test_14_convite(como, app, monkeypatch):
         assert r.status_code == 503 and "nao publicado" in r.json()["detail"]
     finally:
         app.app.state.cfg = cfg_antes
+
+
+def _planilha_base():
+    from datetime import datetime
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "BASE"
+    ws.append(["VENDEDOR", "NUMERO DE REFERENCIA", "NUMERO DO EVENTO", "CODITEM", "UF VALE", "DATA", "DESCRIÇÃO DO CLIENTE",
+               "QUANTIDADE", "UNID MED", "FORNECEDOR", "PREÇO DE COMPRA UNITÁRIO AJUSTADO", "IPI %", "FRETE GERAL %",
+               "MARGEM FINAL", "PREÇO VENDA S/DIFAL", "CONCATENAR", "STATUS", "RESPOSTA PROCV"])
+    d = datetime(2026, 6, 2)
+    ws.append(["A", "SEV900001", 900001, "13900001", "MG", d, "PECA CONHECIDA", 2, "PC", "Fornecedor Carga Um/BAWEX", 100, 3.25, 10, 9.99, 150.5, "", "NÃO LOCALIZADO", ""])
+    ws.append(["A", "SEV900002", 900002, None, "MG", d, "VALVULA ESFERA; DIAMETRO: 2POL; MATERIAL: INOX; CONEXAO: NPT", 1, "PC", "DECLINAR", 0, 0, 0, "Aguardando ...", 0, "", "NÃO LOCALIZADO", ""])
+    ws.append(["A", "SEV900003", 900003, 13999999, "SP", d, "PECA NOVA DA BASE", 1, "PC", "https://loja.com/x?y=1", 50, 0, 0, 8, 60, "", "NÃO LOCALIZADO", ""])
+    ws.append(["A", "SEV900004", 900004, None, "SP", d, "ITEM", 1, "PC", "Fornecedor Carga Um", 10, 0, 0, 8, 12, "", "NÃO LOCALIZADO", ""])
+    pv = wb.create_sheet("COD E PV")
+    pv.append(["OBSERVACAO_CORRIGIDA", "STATUS", "OBS_ORIGINAL"])
+    pv.append(["SEV90000113900001", "GANHEI - PV 7001", "SEV900001 - 13900001"])
+    pv.append(["SEV90000413888888", "GANHEI - PV 7002", "SEV900004"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_40_carga_da_base_da_seven(como):
+    arq = {"arquivo": ("BASE.xlsx", _planilha_base(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    assert como("supervisor").post("/os/admin/importar-base", files=arq).status_code == 403
+    assert como("suporte").post("/os/admin/importar-base", files=arq).status_code == 403
+    c = como("admin")
+    r = c.post("/os/admin/importar-base", files={"arquivo": ("x.csv", b"a,b", "text/csv")})
+    assert r.status_code == 400
+    r = c.post("/os/admin/importar-base", files=arq)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["linhas"] == 4 and d["ganhas"] == 2 and d["declinadas"] == 1 and d["com_preco_compra"] == 3
+    assert d["sem_produto"] == 0  # 900004 ganhou o codigo pela aba PV
+    # recarregar nao duplica
+    d2 = c.post("/os/admin/importar-base", files=arq).json()
+    assert d2["substituidas"] == 4 and d2["produtos_novos"] == 0 and d2["fornecedores_novos"] == 0
+    with psycopg.connect(URL) as conn:
+        q = lambda s, *a: conn.execute(s, a).fetchall()
+        h = q("select codigo, status, preco_compra, linha_original->>'_pedido_venda' from os_homolog.historico_importado where origem = 'base_seven' order by codigo nulls last")
+        assert ("13900001", "ganha", 100, "7001") in [(a, b, float(c) if c else None, e) for a, b, c, e in h]
+        assert len(h) == 4
+        nomes = {n for (n,) in q("select nome from os_homolog.fornecedores")}
+        assert {"FORNECEDOR CARGA UM", "BAWEX"} <= nomes and not any("HTTP" in n or "LOJA" in n for n in nomes)
+        assert q("select count(*) from os_homolog.produto_codigos where codigo = '13999999'")[0][0] == 1
+        assert q("select count(*) from os_homolog.auditoria where entidade = 'historico_importado'")[0][0] >= 2
+        conn.execute("delete from os_homolog.historico_importado where origem = 'base_seven'")

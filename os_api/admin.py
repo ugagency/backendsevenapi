@@ -2,10 +2,10 @@
 from typing import Any, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
-from . import db, validacao
+from . import carga_base, db, validacao
 from .acesso import UsuarioOS, exigir
 from .auditoria import auditar
 from .permissoes import PERFIS
@@ -293,5 +293,24 @@ def rotas_admin() -> APIRouter:
             auditar(conn, origem=_origem(u), entidade="parametro", entidade_id=chave, acao="alterar", user_id=u.id,
                     antes=None if antes is None else {"valor": antes[0]}, depois={"valor": valor})
         return {"chave": chave, "valor": valor}
+
+    @r.post("/importar-base")
+    def importar_base(arquivo: UploadFile = File(...), u: UsuarioOS = Depends(exigir("admin.parametros"))):
+        """Carga da base historica da Seven (BASE.xlsx). So o Administrador. Recarregar o mesmo arquivo nao duplica."""
+        if u.perfil != "administrador":
+            raise HTTPException(status_code=403, detail="So o Administrador carrega a base da Seven.")
+        nome = (arquivo.filename or "base.xlsx").split("/")[-1].split("\\")[-1]
+        if not nome.lower().endswith((".xlsx", ".xlsm")):
+            raise HTTPException(status_code=400, detail="Envie a planilha em Excel (.xlsx).")
+        conteudo = arquivo.file.read()
+        if len(conteudo) > 4_000_000:
+            raise HTTPException(status_code=413, detail="Planilha maior que 4 MB. Divida por mes e envie em partes.")
+        try:
+            with db.conexao() as conn:
+                res = carga_base.importar(conn, conteudo, nome, u.id)
+                auditar(conn, origem="carga", entidade="historico_importado", acao="criar", user_id=u.id, depois=res)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return res
 
     return r

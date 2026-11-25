@@ -27,7 +27,7 @@ def test_validar_aceita_so_lista_fechada():
 
 class _U:
     nome = "Karen Silva"
-    permissoes = frozenset({"fila.ver", "preco_compra.ver"})
+    permissoes = frozenset({"fila.ver", "preco_compra.ver", "venda.ver"})
 
 
 def test_sem_url_usa_regras(monkeypatch):
@@ -66,3 +66,12 @@ def test_parametros_da_ferramenta():
     assert a._par_ferramenta(F(consulta="historico_produto", termo="")) is None
     assert a._par_ferramenta(F(consulta="apagar_tudo", termo="x")) is None
     assert a._par_ferramenta(F(consulta="buscar_produto", termo="rolamento", ate="lixo")) == ("buscar_produto", {"termo": "rolamento"})
+
+
+def test_preco_de_compra_ipi_frete_e_margem_nunca_vao_ao_modelo():
+    resp = {"texto": "x", "tabela": {"colunas": ["Data", "Fornecedor", "Compra (un.)", "IPI %", "Frete", "Venda (un.)", "Margem %"],
+                                     "linhas": [["01/06/2026", "FATTO", 100.0, 3.25, 10, 150.0, 20.1]]}}
+    d = a._para_agente(resp)
+    assert d["colunas"] == ["Data", "Fornecedor", "Venda (un.)"] and d["linhas"] == [["01/06/2026", "FATTO", 150.0]]
+    assert "nao sao enviadas" in d["aviso"]
+    assert "aviso" not in a._para_agente({"texto": "y", "tabela": {"colunas": ["Data"], "linhas": [["a"]]}})
